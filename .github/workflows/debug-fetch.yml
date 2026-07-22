@@ -1,0 +1,28 @@
+name: Debug fetch (manual only)
+
+on:
+  workflow_dispatch:
+    inputs:
+      url:
+        description: "URL to fetch and inspect (defaults to the cars search page)"
+        required: false
+        default: ""
+
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check out repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Fetch and inspect
+        run: python -m scraper.debug_fetch "${{ github.event.inputs.url }}"
