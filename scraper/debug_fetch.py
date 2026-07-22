@@ -29,9 +29,69 @@ from pathlib import Path
 from .config import BASE_URL
 from .http_client import PoliteSession
 
-_NUXT_SCRIPT_RE = re.compile(
-    r"window\.__NUXT__\s*=\s*(\(function\(.*?\)\s*\{.*?\}\)\(.*?\))\s*;?\s*</script>", re.DOTALL
-)
+def _extract_balanced_expr(text: str, start: int) -> str | None:
+    """From index `start` (the first char of a JS expression, must be an
+    opening bracket), scan forward tracking bracket depth and string state
+    to find the matched end of the expression. A single regex can't safely
+    do this for a 300KB+ minified payload with nested braces/strings — this
+    does the same job a real parser would, just without needing a full JS
+    grammar.
+
+    An IIFE like `(function(...){...})(args)` closes its *wrapping* parens
+    before the call's own `(args)` even starts, so a naive "stop at the
+    first balanced group" scan would capture the function reference
+    uncalled, not its return value. This keeps extending through any
+    immediately-following call/bracket group(s) instead of stopping early.
+    """
+    n = len(text)
+    if start >= n or text[start] not in "([{":
+        return None
+
+    def scan_one_group(pos: int) -> int | None:
+        depth = 0
+        in_string: str | None = None
+        j = pos
+        while j < n:
+            c = text[j]
+            if in_string:
+                if c == "\\":
+                    j += 2
+                    continue
+                if c == in_string:
+                    in_string = None
+                j += 1
+                continue
+            if c in "\"'`":
+                in_string = c
+                j += 1
+                continue
+            if c in "([{":
+                depth += 1
+            elif c in ")]}":
+                depth -= 1
+                if depth == 0:
+                    return j + 1
+            j += 1
+        return None
+
+    end = scan_one_group(start)
+    if end is None:
+        return None
+
+    while True:
+        k = end
+        while k < n and text[k] in " \t\r\n":
+            k += 1
+        if k < n and text[k] in "([":
+            next_end = scan_one_group(k)
+            if next_end is None:
+                break
+            end = next_end
+            continue
+        break
+
+    return text[start:end]
+
 
 # Trusted runner: has normal Node access (fs, process) to read the payload
 # file and print the result. The *payload itself* is only ever evaluated
@@ -56,12 +116,26 @@ process.stdout.write(JSON.stringify(result));
 
 
 def dump_nuxt_payload(html: str) -> None:
-    match = _NUXT_SCRIPT_RE.search(html)
-    if not match:
-        print("Could not locate a window.__NUXT__=(function(...){...})(...) script block.")
+    idx = html.find("__NUXT__")
+    if idx == -1:
+        print("Could not find '__NUXT__' anywhere in the page.")
         return
 
-    js_expr = match.group(1)
+    eq_idx = html.find("=", idx)
+    if eq_idx == -1:
+        print("Found '__NUXT__' but no following '=' assignment.")
+        return
+
+    j = eq_idx + 1
+    while j < len(html) and html[j] in " \t\r\n":
+        j += 1
+
+    js_expr = _extract_balanced_expr(html, j)
+    if js_expr is None:
+        print(f"Found '__NUXT__=' at offset {eq_idx} but couldn't find a balanced expression after it.")
+        print("context: " + html[max(0, idx - 40) : idx + 200])
+        return
+
     print(f"nuxt_payload_script_length={len(js_expr)}")
 
     with tempfile.NamedTemporaryFile("w", suffix=".payload.js", delete=False) as f:
