@@ -1,10 +1,18 @@
 # olx.ba car scraper — research & plan
 
 Goal: scrape car listings from olx.ba daily, for a curated set of brands, filtered to
-higher-value cars (20,000 KM / ~€10,225 and up), to build a dataset over a few months
-that answers: which models sell fastest, and at what price are they worth importing
-and reselling. A website/dashboard on top of this data comes later — this doc only
-covers the scraping approach, storage, and metrics.
+higher-value cars (20,000 KM / ~€10,225 and up, mileage ≥ 50,000 km), to build a
+dataset over a few months that answers: which models sell fastest, and at what price
+are they worth importing and reselling. A website/dashboard on top of this data comes
+later — this doc only covers the scraping approach, storage, and metrics.
+
+**Scope filters (applied server-side via query params, not client-side after the fact):**
+- Price ≥ 20,000 KM
+- Mileage ≥ 50,000 km (`kilometra-a_min=50000`)
+- Sorted by publish date, newest first
+- Publish date within the last 45 days — older listings are out of scope entirely,
+  not just deprioritized. This bounds the whole dataset to a rolling 45-day window,
+  which also happens to make the daily crawl cheaper (see §2).
 
 **Caveat up front:** this sandbox's network policy blocks outbound requests to
 `olx.ba` entirely (confirmed 403 at the proxy level, not a site anti-bot response) —
@@ -42,6 +50,9 @@ crawled):
     label — likely `v_m`/`v_b` min/max or a `cijena_min/max` pair; **needs live
     verification**, but worth using directly instead of fetching everything and
     filtering client-side)
+  - a sort param almost certainly exists (results pages need some default order) —
+    **needs live verification**: the exact param/value for "newest published first"
+    (e.g. `sort=newest` / `orderby=datum_desc` — guessing the shape, not the name)
 - There is a separate, apparently newer/related listing surface at `olx.ba/vozila`
   ("PIK.ba" branded — new/used vehicles, cars, motorcycles, trucks) — worth checking
   whether this is the same backend as `/pretraga?category_id=18` or a distinct
@@ -72,13 +83,40 @@ crawled):
 5. Check whether `api-documentation.olx.ba`'s listing-read endpoints work without
    auth, and what their ToS say about automated read access — if a documented,
    sanctioned read API exists, prefer it over HTML scraping outright.
+6. Confirm the "sort by newest" order is actually keyed on **original publish
+   date**, not on a "last bumped/renewed" date. Many classifieds sites let
+   sellers pay/click to bump a stale listing back to the top — if the sort key
+   is bump-date, an old listing could resurface above genuinely new ones, which
+   would break both the 45-day cutoff (a bumped 90-day-old listing could look
+   "new") and the early pagination-stop described in §2. If the site exposes
+   both dates, capture the true publish date on the listing itself rather than
+   trusting page position alone.
 
 ## 2. Recommended scraping approach
 
 **Primary: scrape the public `/pretraga` search-results pages**, using the filter
 query params above to request only what we want server-side (category=cars, brand
-in our watchlist, price ≥ 20,000 KM) rather than pulling everything and filtering
-after — smaller payloads, fewer requests, less load on their servers.
+in our watchlist, price ≥ 20,000 KM, mileage ≥ 50,000 km) rather than pulling
+everything and filtering after — smaller payloads, fewer requests, less load on
+their servers.
+
+**Daily crawl is bounded by the 45-day window, not a full re-crawl:** sort results
+by publish date descending and paginate from page 1; stop as soon as a page's
+listings cross the 45-day-old boundary (pending the bump-vs-publish-date check in
+§1 item 6) — no need to keep paging past that point since anything older is out of
+scope by definition. This has two effects:
+- It naturally re-checks every listing currently inside the window every day (for
+  price changes and for disappearance/removal), since they all still fall within
+  the paginated range until they age out — so removal-detection still works
+  without a full-site crawl.
+- Total daily volume is capped at whatever fits in a 45-day rolling window for our
+  brand+price+mileage filter, not the site's all-time total — much cheaper than
+  paging through everything, and the cost stays roughly flat over time instead of
+  growing as the dataset accumulates.
+- When a still-active listing finally ages past 45 days, record it as `aged_out`,
+  **not** `removed` — we genuinely don't know if it sold after that point, and
+  conflating "fell out of scope" with "actually gone" would quietly corrupt the
+  days-on-market metric (see §5).
 
 - If the results page embeds a JSON blob (likely, per most modern OLX-family sites),
   parse that directly — one clean object per listing, no brittle CSS selectors.
@@ -174,10 +212,12 @@ later is a separate, independent step that won't require touching the scraper.
   "photo_count": 14,
   "description_length": 320,
 
-  "first_seen_date": "2026-07-22",
+  "published_date": "2026-07-20",     // olx.ba's own publish date — the true
+                                       // start of the clock for days_listed
+  "first_seen_date": "2026-07-22",    // when WE first scraped it (bookkeeping only)
   "last_seen_date": "2026-07-30",
-  "days_listed": 8,                   // last_seen - first_seen so far
-  "status": "active",                 // active | removed | price_changed
+  "days_listed": 10,                   // (removed_date or today) - published_date
+  "status": "active",                 // active | removed | aged_out
   "price_history": [
     { "date": "2026-07-22", "price_bam": 25500 },
     { "date": "2026-07-28", "price_bam": 24500 }
@@ -191,11 +231,19 @@ later is a separate, independent step that won't require touching the scraper.
 
 The core question is liquidity vs. price, per brand+model+price-bracket:
 
-- **Days on market (`days_listed`)** — the headline metric. Proxy for demand:
-  computed as `last_seen_date - first_seen_date`, where "last seen" = the last day
-  the listing appeared in a scrape before disappearing from search results.
-  Caveat: a disappearance isn't proof of a sale (could be a manual pull, expiry, or
-  a repost) — flag this as a proxy, not ground truth.
+- **Days on market (`days_listed`)** — the headline metric. Computed from
+  `published_date` (olx.ba's own timestamp, not our scrape date) to the day the
+  listing disappeared from search results. Two caveats:
+  - A disappearance isn't proof of a sale (could be a manual pull, expiry, or a
+    repost) — flag this as a proxy, not ground truth.
+  - **Right-censoring at 45 days:** a listing that ages out of the window while
+    still active must be recorded as `aged_out`, not `removed` — its true
+    days-on-market is unknown (could sell the next day, could sit for months).
+    Silently treating `aged_out` as `removed` would understate days-on-market for
+    exactly the slowest-selling listings, biasing every model comparison toward
+    looking faster-selling than it is. Keep `aged_out` records out of the
+    days-on-market average entirely (or handle them with proper survival-analysis
+    methods later) rather than folding them in.
 - **Repost detection** — same seller + near-identical title/price reappearing
   within days of "disappearing" biases days-on-market downward-then-upward; worth
   a simple heuristic (match on seller + model + mileage±small delta) to exclude

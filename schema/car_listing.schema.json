@@ -13,6 +13,7 @@
     "price_bam",
     "year",
     "mileage_km",
+    "published_date",
     "first_seen_date",
     "last_seen_date",
     "status",
@@ -55,10 +56,15 @@
     "photo_count": { "type": ["integer", "null"] },
     "description_length": { "type": ["integer", "null"] },
 
-    "first_seen_date": { "type": "string", "format": "date" },
+    "published_date": { "type": "string", "format": "date", "description": "olx.ba's own publish date — the true start of the days_listed clock" },
+    "first_seen_date": { "type": "string", "format": "date", "description": "When we first scraped this listing (bookkeeping only, not the market clock)" },
     "last_seen_date": { "type": "string", "format": "date" },
-    "days_listed": { "type": ["integer", "null"] },
-    "status": { "type": "string", "enum": ["active", "removed", "price_changed"] },
+    "days_listed": { "type": ["integer", "null"], "description": "(removed_date or today) - published_date" },
+    "status": {
+      "type": "string",
+      "enum": ["active", "removed", "aged_out"],
+      "description": "aged_out = fell outside the 45-day window while still active; NOT equivalent to removed/sold — keep out of days-on-market averages"
+    },
     "price_history": {
       "type": "array",
       "items": {
