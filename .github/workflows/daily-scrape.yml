@@ -22,8 +22,11 @@ jobs:
   scrape:
     runs-on: ubuntu-latest
     # Hard cap so a stuck request/loop can't hang forever or quietly burn
-    # the whole month's Actions-minutes budget in one run.
-    timeout-minutes: 60
+    # the whole month's Actions-minutes budget in one run. Bumped from 60 to
+    # 120 when the watchlist grew from 6 to 17 brands -- a real run with 6
+    # brands took ~19.5 minutes, and the added mainstream brands likely have
+    # lower filter pass-rates (more wasted pages per brand), not less.
+    timeout-minutes: 120
     steps:
       - name: Check out repo
         uses: actions/checkout@v4

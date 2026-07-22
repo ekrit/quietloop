@@ -67,14 +67,30 @@ class Brand:
         return {"trazilica": self.name}
 
 
-# See docs/RESEARCH.md §6 for rationale (your list + BMW).
+# See docs/RESEARCH.md §6 for rationale. brand_id values below are CONFIRMED
+# from real scraped data (data/listings.json) -- switching these to precise
+# ID-based filtering instead of free-text search, now that we know them.
+# New additions (Volvo through Fiat) still use free-text search since their
+# real brand_id is unconfirmed -- will get the same ID-based upgrade once a
+# few days of real data reveals theirs too.
 BRAND_WATCHLIST: list[Brand] = [
-    Brand("Volkswagen"),
-    Brand("Skoda"),
-    Brand("Audi"),
-    Brand("Mercedes-Benz"),
-    Brand("Porsche"),
-    Brand("BMW"),
+    Brand("Volkswagen", brand_id=89),
+    Brand("Skoda", brand_id=77),
+    Brand("Audi", brand_id=7),
+    Brand("Mercedes-Benz", brand_id=56),
+    Brand("Porsche", brand_id=69),
+    Brand("BMW", brand_id=11),
+    Brand("Volvo"),
+    Brand("Land Rover"),
+    Brand("Toyota"),
+    Brand("Lexus"),
+    Brand("Hyundai"),
+    Brand("Kia"),
+    Brand("Ford"),
+    Brand("Peugeot"),
+    Brand("Renault"),
+    Brand("Alfa Romeo"),
+    Brand("Fiat"),
 ]
 
 # --- HTTP behavior (see docs/RESEARCH.md "Politeness / risk-reduction") ----
