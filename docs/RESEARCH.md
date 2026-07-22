@@ -292,8 +292,37 @@ docs/
   RESEARCH.md     # this file
 ```
 
-No scraper code yet — deliberately, since I can't validate selectors/JSON-blob
-structure against the live site from this sandbox. Next step once the approach
-above is confirmed: implement `scraper.py` + the GitHub Actions workflow, ideally
-in a session/environment that can actually reach olx.ba to verify parsing against
-real pages before it runs unattended on a schedule.
+## 8. Running it
+
+```
+python -m venv .venv && source .venv/bin/activate
+pip install -r requirements-dev.txt   # includes pytest; use requirements.txt for runtime-only
+pytest tests/                          # verifies currency/state-machine/parser logic
+python main.py                         # runs one scrape, writes into data/
+python main.py --date 2026-07-22       # override the run date (backfills/testing)
+```
+
+The `scraper/` package: `config.py` (watchlist + filter/param constants),
+`http_client.py` (rate-limited session with retries + circuit breaker),
+`parser.py` (search-results + detail-page extraction — the part most likely
+to need fixing once run against real pages), `storage.py` (JSON state
+machine — active/removed/aged_out, price history, `days_listed`), `run.py`
+(orchestrator/CLI).
+
+**What's been verified vs. not:** `tests/` covers currency conversion and
+the full removed/aged_out/price-history state machine with real assertions,
+all passing. `parser.py` is exercised against a hand-written fixture that
+approximates a plausible listing card — it is **not** validated against real
+olx.ba HTML (this sandbox can't reach the site). Running `main.py` for real
+confirmed the whole pipeline (URL building, retries, brand loop, JSON
+output) wires together correctly, up to and including graceful handling of a
+network failure per brand — but every actual olx.ba request in that run hit
+the same network block, so nothing here confirms the parser matches real
+markup yet. Next step: run it from a machine with real access, save a
+sample page, and fix `parser.py`'s extraction against it (see that module's
+docstring for exactly what to check first).
+
+Dockerizing this is intentionally deferred — the script has no interactive
+input and reads all config from `scraper/config.py`, so wrapping it in a
+`Dockerfile` + cron/GitHub Actions schedule later should be a small step
+once the parser is confirmed against real data.

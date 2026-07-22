@@ -59,12 +59,14 @@
     "published_date": { "type": "string", "format": "date", "description": "olx.ba's own publish date — the true start of the days_listed clock" },
     "first_seen_date": { "type": "string", "format": "date", "description": "When we first scraped this listing (bookkeeping only, not the market clock)" },
     "last_seen_date": { "type": "string", "format": "date" },
-    "days_listed": { "type": ["integer", "null"], "description": "(removed_date or today) - published_date" },
+    "days_listed": { "type": ["integer", "null"], "description": "(removed_date or aged_out_date or today) - published_date; frozen once terminal" },
     "status": {
       "type": "string",
       "enum": ["active", "removed", "aged_out"],
-      "description": "aged_out = fell outside the 45-day window while still active; NOT equivalent to removed/sold — keep out of days-on-market averages"
+      "description": "aged_out = fell outside the 45-day window while still active; NOT equivalent to removed/sold — out of scope for analysis"
     },
+    "removed_date": { "type": "string", "format": "date", "description": "Set when status becomes removed" },
+    "aged_out_date": { "type": "string", "format": "date", "description": "Set when status becomes aged_out" },
     "price_history": {
       "type": "array",
       "items": {
