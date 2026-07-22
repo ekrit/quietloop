@@ -30,6 +30,7 @@ def build_search_url(brand: config.Brand, page: int) -> str:
         "category_id": config.CARS_CATEGORY_ID,
         config.MILEAGE_MIN_PARAM: config.MIN_MILEAGE_KM,
         config.PRICE_MIN_PARAM: config.MIN_PRICE_BAM,
+        config.YEAR_MIN_PARAM: config.MIN_YEAR,
         config.SORT_PARAM: config.SORT_VALUE_NEWEST,
         "page": page,
     }
@@ -67,6 +68,8 @@ def scrape_brand(session: PoliteSession, brand: config.Brand, run_date: date) ->
             if (item.get("price_bam") or 0) < config.MIN_PRICE_BAM:
                 continue
             if (item.get("mileage_km") or 0) < config.MIN_MILEAGE_KM:
+                continue
+            if (item.get("year") or 0) < config.MIN_YEAR:
                 continue
             collected.append(item)
 

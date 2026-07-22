@@ -9,6 +9,9 @@ later — this doc only covers the scraping approach, storage, and metrics.
 **Scope filters (applied server-side via query params, not client-side after the fact):**
 - Price ≥ 20,000 KM
 - Mileage ≥ 50,000 km (`kilometra-a_min=50000`)
+- Year ≥ 2016 (`godiste_min=2016`) — "younger than 2016" read as 2016 model year
+  or newer; flip to `> 2016` in `scraper/config.py` (`MIN_YEAR`) if you meant
+  strictly newer than 2016.
 - Sorted by publish date, newest first
 - Publish date within the last 45 days — older listings are out of scope entirely,
   not just deprioritized. This bounds the whole dataset to a rolling 45-day window,

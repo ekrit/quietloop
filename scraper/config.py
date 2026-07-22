@@ -34,11 +34,14 @@ PRICE_MIN_PARAM = "cijena_min"
 # (docs/RESEARCH.md item 6).
 SORT_PARAM = "sort"
 SORT_VALUE_NEWEST = "newest"
+# Confirmed present in real URLs (docs/RESEARCH.md §1) as a year-range filter.
+YEAR_MIN_PARAM = "godiste_min"
 
 # --- Scope filters (per your instructions) ---------------------------------
 
 MIN_PRICE_BAM = 20_000
 MIN_MILEAGE_KM = 50_000
+MIN_YEAR = 2016  # inclusive — "younger than 2016" read as 2016 model year or newer
 MAX_LISTING_AGE_DAYS = 45
 
 
