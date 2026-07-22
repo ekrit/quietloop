@@ -66,10 +66,25 @@ jobs:
           git config user.email "actions@users.noreply.github.com"
           git add -A data/
 
+          COMMIT_MSG="Daily scrape: $(date -u +%F)"
+          if [ "$(date -u +%d)" = "01" ]; then
+            JOKES=(
+              "Beep beep, another month of chasing undervalued Passats."
+              "Still scraping. Still not rich. Still dreaming of a Porsche."
+              "This bot has now seen more Skodas than most mechanics ever will."
+              "New month, same mission: find that one underpriced Touareg."
+              "Brought to you by caffeine, cron, and mild obsession."
+              "If this bot could drive, it would absolutely total a Golf 7."
+              "Somewhere in Sarajevo, a diesel Passat just got 500 KM cheaper. Not sorry."
+              "Another month closer to owning a Porsche. Emotionally, if not financially."
+            )
+            COMMIT_MSG="${COMMIT_MSG} -- ${JOKES[$((RANDOM % ${#JOKES[@]}))]}"
+          fi
+
           if git diff --cached --quiet; then
             echo "No changes to commit (unexpected — heartbeat file should always differ)."
           else
-            git commit -m "Daily scrape: $(date -u +%F)"
+            git commit -m "$COMMIT_MSG"
             pushed=false
             for attempt in 1 2 3; do
               if git pull --rebase origin "${{ github.ref_name }}" && git push; then
