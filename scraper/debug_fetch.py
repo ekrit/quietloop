@@ -185,6 +185,21 @@ def dump_nuxt_payload(html: str) -> None:
 
         walk(data)
 
+        search = data.get("state", {}).get("search", {})
+        results = search.get("results")
+        if isinstance(results, list) and results:
+            print("--- sample listing (state.search.results[0]) ---")
+            print(json.dumps(results[0], ensure_ascii=False, indent=2))
+            if len(results) > 1:
+                print("--- sample listing (state.search.results[1]) ---")
+                print(json.dumps(results[1], ensure_ascii=False, indent=2))
+
+        categories = search.get("aggregations", {}).get("categories")
+        if isinstance(categories, list):
+            print("--- state.search.aggregations.categories ---")
+            for cat in categories:
+                print(f"  id={cat.get('id')} name={cat.get('name')!r} count={cat.get('count')}")
+
     out_path = Path("/tmp/nuxt_payload.json")
     out_path.write_text(json.dumps(data, ensure_ascii=False, indent=2)[:200000])
     print(f"wrote (possibly truncated) payload to {out_path}")
