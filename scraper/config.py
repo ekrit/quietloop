@@ -77,6 +77,13 @@ REQUEST_TIMEOUT_SECONDS = 20
 MAX_RETRIES = 3
 MAX_PAGES_PER_BRAND = 60  # hard safety cap regardless of cutoff logic
 CONSECUTIVE_EMPTY_PAGES_TO_STOP = 2
+# Caps detail-page fetches in a single run — mainly protects the very first
+# run (a cold-start backfill could otherwise find hundreds/thousands of
+# "new" listings at once and blow well past any CI job timeout). Listings
+# beyond the cap still get saved with search-card-level fields; they just
+# permanently miss the detail-only fields (fuel_type, engine, etc.) since
+# existing listings are never re-fetched for detail (see run.py).
+MAX_DETAIL_FETCHES_PER_RUN = 300
 
 USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "

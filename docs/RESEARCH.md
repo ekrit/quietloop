@@ -349,18 +349,43 @@ workflow — no server, no Docker, no separate infra to pay for or maintain:
    failure skip the commit step — partial data from a partially-successful
    run still gets saved (matches the "partial data beats losing the whole
    day" design in `scraper/run.py`).
-4. **Commits and pushes `data/`** using the workflow's own built-in
-   `GITHUB_TOKEN` (needs `permissions: contents: write`, already set) — no
-   extra secret/PAT needed. Skips the commit entirely if nothing changed
-   that day. Pulls-and-rebases before pushing as a small safety net against
-   a concurrent manual commit.
-5. **Fails the job at the end if `main.py` exited non-zero** (see the
-   `healthy` flag added to `scraper/run.py` — false if the circuit breaker
+4. **Records a heartbeat, commits and pushes `data/` — unconditionally,
+   `if: always()`.** This step runs even if install, tests, or the scraper
+   itself failed. It writes `data/last_run.txt` (timestamp + the scraper's
+   exit code) before committing, so there's always something to commit even
+   on a day where the scrape produced zero new data — see §9.1 for why that
+   matters. Retries push up to 3 times with a rebase in between, to survive
+   a transient conflict rather than silently losing that day's commit.
+5. **Fails the job at the end if the scraper didn't exit 0** (see the
+   `healthy` flag in `scraper/run.py` — false if the circuit breaker
    tripped or every single brand failed). A failed scheduled workflow run
    shows up red in the Actions tab and GitHub emails whoever last edited the
    workflow file — that's your signal something's actually wrong (e.g.
-   olx.ba started blocking the requests) rather than silently accumulating
-   empty snapshots for weeks.
+   olx.ba started blocking the requests), separate from whether the
+   schedule itself keeps running (it does, regardless — see §9.1).
+
+### 9.1 Reliability checklist — what could make this stop, and what's done about it
+
+You asked for this to run effectively forever without needing to be
+restarted by hand. Concretely, here's every way a "runs daily forever"
+setup like this can actually die, and what's in place for each:
+
+| Failure mode | Effect if unhandled | Mitigation |
+|---|---|---|
+| GitHub auto-disables a schedule after 60 days with zero commits to the repo | Cron silently stops firing, permanently, with no notification | The heartbeat file (§9, step 4) guarantees a commit every single day regardless of whether the scrape found anything, so this can never trigger as long as the workflow runs at all |
+| A step earlier in the job fails (bad dependency, broken test) | Later steps get skipped by default — no commit that day | The heartbeat/commit step uses `if: always()`, so it runs (and the schedule stays "alive") no matter which earlier step failed |
+| `git push` fails (race with a manual commit, transient network blip) | That day's commit exists only on the ephemeral runner and is lost the moment the job ends | Push is retried 3x with `git pull --rebase` in between; if all 3 fail, the job fails loudly (`::error::`) instead of silently losing data |
+| A bug causes an infinite/near-infinite loop (bad pagination, stuck request) | Job hangs, potentially burning the whole month's Actions-minutes budget in one run | `timeout-minutes: 60` at the job level, plus existing caps in `scraper/config.py` (`MAX_PAGES_PER_BRAND`, the circuit breaker) that should never let a normal run get anywhere close to that |
+| The very first run finds a huge backlog of "new" listings at once (cold-start backfill) and detail-fetching all of them blows past the time budget | First run times out mid-way, nothing gets saved that day | `MAX_DETAIL_FETCHES_PER_RUN` (300) caps detail-page fetches per run; anything beyond the cap is still saved with card-level fields (price/year/mileage/etc.), just without the detail-only fields, and isn't re-fetched later (see `run.py`'s `enrich_new_listings`) |
+| One brand's page is broken/blocked | Would otherwise crash the whole run, losing every other brand's data too | Per-brand try/except in `run.py` — one brand failing is logged and skipped, the rest still run |
+| Repeated 403/429 responses (site blocking us) | Would otherwise retry forever, hammering the site | Circuit breaker in `http_client.py` stops the run after 3 consecutive hostile responses rather than retrying indefinitely |
+| `data/listings.json` gets corrupted (e.g. a run killed mid-write) | `load_state()` would throw and the whole run would fail | Not auto-healed — by design, since silently discarding it would erase months of history. Recover via `git checkout <previous-commit> -- data/listings.json`; the daily commits mean a good version is always one commit away |
+| Repo-level things outside the code's control: Actions disabled at the repo/org level, billing/quota issues on a private repo, the repo deleted or made archived | Schedule stops regardless of anything in this workflow | Not fixable from code — worth an occasional manual glance at the Actions tab. If this repo is private, keep an eye on included Actions minutes; public repos get unlimited minutes on standard runners |
+| Branch protection added later to the default branch | Direct push from the bot starts failing every day | Not set up preemptively (no protection exists yet) — if you add branch protection later, either exempt this workflow's token or switch the commit step to open a PR instead of pushing directly |
+
+None of this replaces occasionally checking the Actions tab yourself —
+it minimizes the ways the schedule can *silently* die, but a red run still
+means something needs a look.
 
 **What you need to do to actually turn it on:**
 - **Merge this branch into the repo's default branch** (or make it the

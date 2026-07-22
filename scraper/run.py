@@ -93,9 +93,17 @@ def scrape_brand(session: PoliteSession, brand: config.Brand, run_date: date) ->
 def enrich_new_listings(session: PoliteSession, state: dict, listings: list[dict]) -> None:
     """Fetch the detail page only for listings not already in state — spec
     fields don't change over a listing's life, so existing listings never
-    need a detail re-fetch (docs/RESEARCH.md §2)."""
+    need a detail re-fetch (docs/RESEARCH.md §2). Capped per run (see
+    config.MAX_DETAIL_FETCHES_PER_RUN) so an unusually large batch of new
+    listings — most likely on the very first cold-start run — can't blow
+    past the CI job's time budget."""
+    fetched = 0
+    skipped_due_to_cap = 0
     for item in listings:
         if item["id"] in state:
+            continue
+        if fetched >= config.MAX_DETAIL_FETCHES_PER_RUN:
+            skipped_due_to_cap += 1
             continue
         try:
             response = session.get(item["url"])
@@ -104,7 +112,17 @@ def enrich_new_listings(session: PoliteSession, state: dict, listings: list[dict
         except Exception:
             logger.exception("failed to fetch detail page for %s", item.get("url"))
             continue
+        finally:
+            fetched += 1
         item.update(parse_detail_page(response.text))
+
+    if skipped_due_to_cap:
+        logger.warning(
+            "hit MAX_DETAIL_FETCHES_PER_RUN (%d) — %d new listings saved with "
+            "card-level fields only this run",
+            config.MAX_DETAIL_FETCHES_PER_RUN,
+            skipped_due_to_cap,
+        )
 
 
 def run(run_date: date | None = None) -> tuple[dict, bool]:
