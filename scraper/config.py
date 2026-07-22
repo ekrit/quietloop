@@ -81,6 +81,14 @@ class Brand:
 # brand_id values below are CONFIRMED from real scraped data
 # (data/listings.json) -- precise ID-based filtering for these 6; the rest
 # still use free-text search since their real brand_id is unconfirmed.
+#
+# Expanded 2026-07-22 from 17 to the top 30 manufacturers by actual Bosnian
+# market presence (not global fame) -- see docs/RESEARCH.md §1b for sources.
+# Real data confirmed VW alone is ~34% of the whole registered fleet, VW+Audi
+# +BMW+Mercedes+Opel together are >60% of it, and Skoda/Toyota/VW/Renault/
+# Hyundai are the current new-car top 5. Opel in particular was a glaring gap
+# -- explicitly named as a top-tier German-origin contributor to the fleet --
+# despite not being on the original watchlist at all.
 BRAND_WATCHLIST: list[Brand] = [
     Brand("Volkswagen", brand_id=89),
     Brand("Skoda", brand_id=77),
@@ -88,6 +96,10 @@ BRAND_WATCHLIST: list[Brand] = [
     Brand("Mercedes-Benz", brand_id=56),
     Brand("Porsche", brand_id=69),
     Brand("BMW", brand_id=11),
+    # brand=64 seen in a real search-indexed olx.ba URL (§1) but not yet
+    # confirmed via a live scrape the way the 6 above are -- same caveat as
+    # any brand_id below not in CONFIRMED_BRAND_IDS.
+    Brand("Opel", brand_id=64),
     Brand("Volvo"),
     Brand("Land Rover"),
     Brand("Toyota"),
@@ -99,6 +111,18 @@ BRAND_WATCHLIST: list[Brand] = [
     Brand("Renault"),
     Brand("Alfa Romeo"),
     Brand("Fiat"),
+    Brand("Citroen"),
+    Brand("Seat"),
+    Brand("Nissan"),
+    Brand("Honda"),
+    Brand("Mazda"),
+    Brand("Mitsubishi"),
+    Brand("Suzuki"),
+    Brand("Dacia"),
+    Brand("Chevrolet"),
+    Brand("Jeep"),
+    Brand("Subaru"),
+    Brand("Mini"),
 ]
 
 # Same mapping as BRAND_WATCHLIST's confirmed ids, kept as a dict for

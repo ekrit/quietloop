@@ -385,6 +385,41 @@ Hyundai, Kia, Ford, Peugeot, Renault, Alfa Romeo, Fiat (free-text search,
 still in place as a fallback/cross-check, but `run.py`'s per-brand loop
 still sets the authoritative `brand` value from which search found it.
 
+## 6a. Expanded 17 → 30, based on actual Bosnian market share (not global fame)
+
+The 17-brand list above was picked by general reputation/import-worthiness.
+Asked "what's actually common in Bosnia specifically," a web research pass
+turned up real market data:
+
+- Volkswagen alone is ~33.7% of the entire registered passenger fleet
+  (~367k–385k vehicles) — by far #1, and expected to stay that way.
+- Škoda is #2 in registered fleet (~99k) but **#1 in new-car sales** (22.6%
+  share; the Octavia has been Bosnia's best-selling model 13 of the last 14
+  years).
+- New-car sales top 5, in order: Škoda, Toyota, Volkswagen, Renault, Hyundai.
+- Counting Volkswagen, Audi, BMW, Mercedes-Benz, and **Opel** together,
+  German-origin cars are >60% of the whole fleet.
+- For used-car imports specifically: Volkswagen, Audi, Škoda, then
+  **Peugeot** (~5%/month, ~400 vehicles), then Mercedes-Benz.
+
+Sources: [proauto.ba](https://proauto.ba/u-bosni-i-hercegovini-trenutno-ima-najvise-volkswagena-i-sve-su-prilike-da-ce-tako-i-ostati-jos-dugo/),
+[bestsellingcarsblog.com](https://bestsellingcarsblog.com/2026/04/bosnia-herzegovina-march-2026-skoda-octavia-and-scala-on-top/),
+[zenicablog.com](https://www.zenicablog.com/zasto-su-u-bih-trazeni-uvozni-automobili-stari-i-po-15-godina-i-koje-marke-su-najpopularnije/),
+[blink.ba](https://www.blink.ba/bez-konkurencije-svaki-treci-polovnjak-u-bih-je-volkswagen/).
+
+**Opel** was the glaring gap — a named top-tier contributor to the fleet
+that wasn't on the watchlist at all. `config.py` also has a real
+`brand=64` for Opel, seen in a search-indexed olx.ba URL (§1), though
+unlike the original 6 it isn't confirmed via a live scrape yet.
+
+`BRAND_WATCHLIST` was expanded from 17 to 30, adding: Opel (`brand_id=64`,
+unconfirmed-via-live-run), Citroën, Seat, Nissan, Honda, Mazda, Mitsubishi,
+Suzuki, Dacia, Chevrolet, Jeep, Subaru, Mini — all free-text search, no
+confirmed `brand_id`. All 13 names were already present in `KNOWN_BRANDS`
+for title-fallback matching, just not previously queried directly. Job
+timeout bumped 120→180 minutes ahead of the first real run at this size
+(see `daily-scrape.yml`).
+
 If broader-than-watchlist coverage is wanted later, the fix isn't "no
 filter" — it's either a much larger MAX_PAGES with a much longer timeout (a
 few hours, impractical for a daily job), or more, narrower per-brand/

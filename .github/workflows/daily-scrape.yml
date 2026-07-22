@@ -22,11 +22,14 @@ jobs:
   scrape:
     runs-on: ubuntu-latest
     # Hard cap so a stuck request/loop can't hang forever or quietly burn
-    # the whole month's Actions-minutes budget in one run. Bumped from 60 to
-    # 120 when the watchlist grew from 6 to 17 brands -- a real run with 6
-    # brands took ~19.5 minutes, and the added mainstream brands likely have
-    # lower filter pass-rates (more wasted pages per brand), not less.
-    timeout-minutes: 120
+    # the whole month's Actions-minutes budget in one run. Bumped 60->120 when
+    # the watchlist grew 6->17 brands (a real 17-brand run took ~32.5 min).
+    # Bumped again 120->180 for the 17->30 expansion -- proportionally that's
+    # only ~57 min, but several of the new entries are free-text searches
+    # with no confirmed brand_id, which can be noisier/slower per page than
+    # the ID-based ones, so the margin is deliberately generous until a real
+    # run confirms the actual number.
+    timeout-minutes: 180
     steps:
       - name: Check out repo
         uses: actions/checkout@v4
