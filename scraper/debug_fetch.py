@@ -42,10 +42,31 @@ def main() -> None:
     title_match = re.search(r"<title>(.*?)</title>", text, re.IGNORECASE | re.DOTALL)
     print(f"title={title_match.group(1).strip() if title_match else None}")
 
-    print("--- first 4000 chars ---")
-    print(text[:4000])
-    print("--- last 1500 chars ---")
-    print(text[-1500:])
+    hrefs = set(re.findall(r'href="([^"]+)"', text))
+    interesting = sorted(
+        h
+        for h in hrefs
+        if h.startswith("/") and not h.startswith(("/_nuxt", "/js/", "/img/", "/favicon", "/css/"))
+    )
+    print(f"total_unique_hrefs={len(hrefs)}")
+    print(f"interesting_hrefs_sample (of {len(interesting)}):")
+    for h in interesting[:50]:
+        print(f"  {h}")
+
+    km_count = len(re.findall(r"\bKM\b", text))
+    print(f"KM_occurrences={km_count}")
+    for m in list(re.finditer(r".{80}KM.{20}", text))[:8]:
+        print(f"KM_context: ...{m.group(0)}...")
+
+    class_matches = sorted(
+        set(re.findall(r'class="([^"]*(?:card|listing|oglas|item|result)[^"]*)"', text, re.IGNORECASE))
+    )
+    print(f"listing-like class names ({len(class_matches)} unique):")
+    for c in class_matches[:30]:
+        print(f"  {c}")
+
+    print("--- first 3000 chars ---")
+    print(text[:3000])
 
 
 if __name__ == "__main__":
