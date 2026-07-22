@@ -39,7 +39,7 @@ YEAR_MIN_PARAM = "godiste_min"
 
 # --- Scope filters (per your instructions) ---------------------------------
 
-MIN_PRICE_BAM = 20_000
+MIN_PRICE_BAM = 25_000
 MIN_MILEAGE_KM = 50_000
 MIN_YEAR = 2016  # inclusive — "younger than 2016" read as 2016 model year or newer
 MAX_LISTING_AGE_DAYS = 45

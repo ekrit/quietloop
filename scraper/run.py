@@ -1,7 +1,7 @@
 """Orchestrates a single scraping run.
 
 For each watch-listed brand (scraper/config.py), pages through olx.ba search
-results newest-first for cars priced >= 20,000 KM and mileage >= 50,000 km,
+results newest-first for cars priced >= 25,000 KM and mileage >= 50,000 km,
 stops once past the 45-day publish window, enriches brand-new listings with
 a detail-page fetch, and merges the result into local JSON storage.
 

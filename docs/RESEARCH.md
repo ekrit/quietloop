@@ -1,13 +1,13 @@
 # olx.ba car scraper — research & plan
 
 Goal: scrape car listings from olx.ba daily, for a curated set of brands, filtered to
-higher-value cars (20,000 KM / ~€10,225 and up, mileage ≥ 50,000 km), to build a
+higher-value cars (25,000 KM / ~€12,782 and up, mileage ≥ 50,000 km), to build a
 dataset over a few months that answers: which models sell fastest, and at what price
 are they worth importing and reselling. A website/dashboard on top of this data comes
 later — this doc only covers the scraping approach, storage, and metrics.
 
 **Scope filters (applied server-side via query params, not client-side after the fact):**
-- Price ≥ 20,000 KM
+- Price ≥ 25,000 KM
 - Mileage ≥ 50,000 km (`kilometra-a_min=50000`)
 - Year ≥ 2016 (`godiste_min=2016`) — "younger than 2016" read as 2016 model year
   or newer; flip to `> 2016` in `scraper/config.py` (`MIN_YEAR`) if you meant
@@ -99,7 +99,7 @@ crawled):
 
 **Primary: scrape the public `/pretraga` search-results pages**, using the filter
 query params above to request only what we want server-side (category=cars, brand
-in our watchlist, price ≥ 20,000 KM, mileage ≥ 50,000 km) rather than pulling
+in our watchlist, price ≥ 25,000 KM, mileage ≥ 50,000 km) rather than pulling
 everything and filtering after — smaller payloads, fewer requests, less load on
 their servers.
 
@@ -262,7 +262,7 @@ The core question is liquidity vs. price, per brand+model+price-bracket:
   for "what to buy to resell."
   `price_per_km` and a simple year/mileage-adjusted price band per model are
   enough to start; a regression can come later once there's more data.
-- **Volume per model** — how many qualifying (≥20k KM) listings appear per model
+- **Volume per model** — how many qualifying (≥25k KM) listings appear per model
   per month — low volume means any conclusions are noisy; worth tracking so the
   future dashboard can flag "not enough data yet" per model.
 
@@ -276,11 +276,11 @@ Your list (Mercedes-Benz, Škoda, Audi, Volkswagen, Porsche) plus:
   **Volvo** (XC60/XC90) and **Land Rover/Range Rover** — common higher-end imports
   in BiH, smaller volume but relevant if you're specifically hunting luxury SUVs.
 
-Within each brand, the models actually worth watching for the 20k+ KM bracket in
+Within each brand, the models actually worth watching for the 25k+ KM bracket in
 this market are the higher trims/newer years — e.g. VW Passat (B8)/Tiguan/Touareg,
 Škoda Superb/Kodiaq, Audi A4/A6/Q5/Q7, Mercedes C/E-Class/GLC/GLE, Porsche
 Macan/Cayenne/Panamera, BMW 5-Series/X3/X5. Base-trim older cars from these brands
-mostly won't clear 20k KM, so the brand+price filter largely self-selects the
+mostly won't clear 25k KM, so the brand+price filter largely self-selects the
 right segment — no need for a separate model-tier whitelist up front.
 
 ## 7. Repo layout for this stage
