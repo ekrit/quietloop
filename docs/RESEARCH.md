@@ -236,14 +236,12 @@ The core question is liquidity vs. price, per brand+model+price-bracket:
   listing disappeared from search results. Two caveats:
   - A disappearance isn't proof of a sale (could be a manual pull, expiry, or a
     repost) — flag this as a proxy, not ground truth.
-  - **Right-censoring at 45 days:** a listing that ages out of the window while
-    still active must be recorded as `aged_out`, not `removed` — its true
-    days-on-market is unknown (could sell the next day, could sit for months).
-    Silently treating `aged_out` as `removed` would understate days-on-market for
-    exactly the slowest-selling listings, biasing every model comparison toward
-    looking faster-selling than it is. Keep `aged_out` records out of the
-    days-on-market average entirely (or handle them with proper survival-analysis
-    methods later) rather than folding them in.
+  - **`aged_out` is out of scope, not a data problem to solve:** a listing still
+    active after 45 days simply didn't sell fast enough to be a candidate worth
+    importing — that's the whole point of the cutoff. Record it as `aged_out`
+    (distinct from `removed`) purely so it doesn't get miscounted as a fast sale;
+    beyond that, drop it from consideration entirely. No survival-analysis
+    treatment needed — slow movers aren't part of what this dataset is for.
 - **Repost detection** — same seller + near-identical title/price reappearing
   within days of "disappearing" biases days-on-market downward-then-upward; worth
   a simple heuristic (match on seller + model + mileage±small delta) to exclude
