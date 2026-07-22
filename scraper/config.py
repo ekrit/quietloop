@@ -7,7 +7,9 @@ site directly — see docs/RESEARCH.md).
 """
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
+from typing import Optional
 
 # --- Paths ----------------------------------------------------------------
 
@@ -50,19 +52,59 @@ MIN_YEAR = 2016  # inclusive — "younger than 2016" read as 2016 model year or 
 MAX_LISTING_AGE_DAYS = 45
 
 
-# No brand watchlist / per-brand querying anymore (see docs/RESEARCH.md §6):
-# the price/mileage/year filters already gate for "expensive enough to be
-# worth analyzing" regardless of brand, so pre-selecting brands via the
-# search query was just deciding the answer before the data could. Instead
-# every car in the category gets scraped once, and `brand` is derived from
-# the listing itself (parser.py's _guess_brand): first via CONFIRMED_BRAND_IDS
-# below when the numeric id is known, otherwise by matching KNOWN_BRANDS
-# against the title text.
+# REVERTED (see docs/RESEARCH.md §6 and the 2026-07-22 postmortem): a
+# brand-agnostic single sweep of the whole category was tried and made
+# things *worse*, not better. A real run hit the 800-page hard cap without
+# ever reaching the natural 45-day-window stop condition -- total unfiltered
+# category volume is too high to exhaustively traverse in a sane page
+# budget, whereas per-brand text search narrows things down enough that
+# exhaustive 45-day coverage actually works (proven the day before). Worse,
+# that run then marked ~1,820 previously-tracked listings `removed` simply
+# because the shallow, truncated crawl never got back around to seeing them
+# again -- not because they'd actually left the site. Back to per-brand
+# querying, now covering all 17 brands below instead of the original 6.
+@dataclass
+class Brand:
+    name: str
+    # Prefer a numeric olx.ba `brand=<id>` filter once confirmed (precise).
+    # Until then, falls back to the free-text `trazilica=<name>` search
+    # param (works today, but can pick up false positives from listings
+    # that merely mention the brand in their description/title).
+    brand_id: Optional[int] = None
 
-# Confirmed from real scraped data (data/listings.json) on 2026-07-22 --
-# these are the only olx.ba brand_ids actually verified so far. Extend this
-# as more brand_ids get confirmed from future scrapes (e.g. by checking
-# which id repeatedly co-occurs with a given brand name in titles).
+    def query_params(self) -> dict:
+        if self.brand_id is not None:
+            return {"brand": self.brand_id, "brands": self.brand_id}
+        return {"trazilica": self.name}
+
+
+# brand_id values below are CONFIRMED from real scraped data
+# (data/listings.json) -- precise ID-based filtering for these 6; the rest
+# still use free-text search since their real brand_id is unconfirmed.
+BRAND_WATCHLIST: list[Brand] = [
+    Brand("Volkswagen", brand_id=89),
+    Brand("Skoda", brand_id=77),
+    Brand("Audi", brand_id=7),
+    Brand("Mercedes-Benz", brand_id=56),
+    Brand("Porsche", brand_id=69),
+    Brand("BMW", brand_id=11),
+    Brand("Volvo"),
+    Brand("Land Rover"),
+    Brand("Toyota"),
+    Brand("Lexus"),
+    Brand("Hyundai"),
+    Brand("Kia"),
+    Brand("Ford"),
+    Brand("Peugeot"),
+    Brand("Renault"),
+    Brand("Alfa Romeo"),
+    Brand("Fiat"),
+]
+
+# Same mapping as BRAND_WATCHLIST's confirmed ids, kept as a dict for
+# parser.py's _guess_brand() fallback (used to double-check/label a listing
+# by its own brand_id/title even though run.py's per-brand loop already
+# tags `brand` from which search found it -- see parser.py).
 CONFIRMED_BRAND_IDS: dict[int, str] = {
     89: "Volkswagen",
     77: "Skoda",
@@ -97,12 +139,7 @@ KNOWN_BRANDS: list[str] = sorted(
 REQUEST_DELAY_SECONDS = (2.0, 4.0)  # randomized delay range between requests
 REQUEST_TIMEOUT_SECONDS = 20
 MAX_RETRIES = 3
-# Hard safety cap regardless of cutoff logic. There's now a single sweep of
-# the whole category (no per-brand loop), so this bounds the entire crawl,
-# not one brand's worth -- initial guess, not yet tuned against real total
-# category volume. 800 pages * ~3s avg delay =~ 40 min, comfortably inside
-# the 120-minute job timeout.
-MAX_PAGES = 800
+MAX_PAGES_PER_BRAND = 60  # hard safety cap regardless of cutoff logic
 CONSECUTIVE_EMPTY_PAGES_TO_STOP = 2
 # If this many pages in a row fail to fetch/parse, stop rather than burning
 # the whole MAX_PAGES budget on guaranteed failures (e.g. site structure

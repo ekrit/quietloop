@@ -170,13 +170,11 @@ Key findings from this:
 
 **Primary: scrape the public `/pretraga` search-results pages**, using the filter
 query params above to request only what we want server-side (category=cars,
-price ≥ 25,000 KM, mileage ≥ 50,000 km) rather than pulling everything and
-filtering after — smaller payloads, fewer requests, less load on their servers.
-**No brand filter in the query at all** (see §6) — a single sweep of the whole
-category, not N per-brand searches. This is architecturally simpler and likely
-no slower overall: per-brand searches each independently paginate through
-whatever "recent" pages match that brand's text, which plausibly re-covers a lot
-of overlapping ground across brands, versus one linear pass over everything.
+brand in our watchlist, price ≥ 25,000 KM, mileage ≥ 50,000 km) rather than
+pulling everything and filtering after — smaller payloads, fewer requests,
+less load on their servers. **The brand filter turned out to be load-bearing,
+not just a convenience** — see §6 for what happened when it was dropped in
+favor of one unfiltered category-wide sweep (short version: don't).
 
 **Daily crawl is bounded by the 45-day window, not a full re-crawl:** sort results
 by publish date descending and paginate from page 1; stop as soon as a page's
@@ -196,14 +194,12 @@ scope by definition. This has two effects:
   conflating "fell out of scope" with "actually gone" would quietly corrupt the
   days-on-market metric (see §5).
 
-**Real numbers, since a live run happened before and after this change:** with
-6 watch-listed brands (per-brand searches), a real run took ~19.5 minutes and
-collected 2,216 qualifying listings. `MAX_PAGES` (replacing the old per-brand
-`MAX_PAGES_PER_BRAND`) is set to 800 as an initial guess for the single-sweep
-version — not yet tuned against real observed volume, since removing the brand
-filter changes the total page count in an unknown direction. The job timeout
-was bumped 60→120 minutes alongside this change as a safety margin; if a real
-run comes in well under that, both numbers are worth revisiting downward.
+**Real numbers:** a live run with the original 6 watch-listed brands took
+~19.5 minutes and collected 2,216 qualifying listings, each brand's crawl
+correctly reaching its natural 45-day-window stop. `MAX_PAGES_PER_BRAND` is
+60. The watchlist has since grown to 17 brands (§6) — expect the daily run
+to take longer accordingly; the job timeout was bumped 60→120 minutes ahead
+of that.
 
 - **Confirmed (§1a):** parse the page by extracting and sandboxed-evaluating its
   embedded `window.__NUXT__=...` payload (`scraper/nuxt_payload.py`), then read
@@ -351,34 +347,49 @@ The core question is liquidity vs. price, per brand+model+price-bracket:
   per month — low volume means any conclusions are noisy; worth tracking so the
   future dashboard can flag "not enough data yet" per model.
 
-## 6. No brand watchlist — every brand gets scraped
+## 6. Back to per-brand watchlist (tried dropping it — made things worse)
 
-Originally this was a curated list (Mercedes-Benz, Škoda, Audi, Volkswagen,
-Porsche, BMW, plus a "second tier" of Volvo/Land Rover). That's been dropped:
-the price/mileage/year filters already gate for "expensive enough to be
-worth analyzing" regardless of brand, so pre-selecting brands via the search
-query was just deciding the answer before the data could — a Peugeot or
-Toyota that clears 25k KM/2016+/50k+ km is exactly as relevant a data point
-as a BMW that does. Every car in the category now gets scraped once (see §2),
-and `brand` is derived from the listing itself:
+**What was tried:** the reasoning was that the price/mileage/year filters
+already gate for "expensive enough to be worth analyzing" regardless of
+brand, so pre-selecting brands via the search query was just deciding the
+answer before the data could. So the watchlist was dropped entirely for one
+brand-agnostic sweep of the whole category (`category_id=18`, no brand
+param at all), with `brand` derived after the fact from the listing itself
+(`brand_id` when confirmed, otherwise matching title against a ~48-brand
+list, longest-name-first).
 
-- If `brand_id` is one of the ones confirmed from real data
-  (`config.CONFIRMED_BRAND_IDS` — currently Volkswagen/Škoda/Audi/
-  Mercedes-Benz/Porsche/BMW), use that name directly.
-- Otherwise, match the title against `config.KNOWN_BRANDS` (~48 common
-  brands: the original 6 plus Volvo, Land Rover, Toyota, Lexus, Hyundai,
-  Kia, Ford, Peugeot, Renault, Alfa Romeo, Fiat, Opel, Citroen, Seat, and
-  more), longest-name-first so "Land Rover" matches before a bare "Rover"
-  could confuse things.
-- If neither matches, `brand` is left `null` rather than guessed wrong.
-  These listings still get fully tracked (price, year, mileage, etc.) —
-  they just won't group cleanly by brand in analysis until `KNOWN_BRANDS`
-  is extended or a listing turns out to need a title-parsing special case.
+**What actually happened, from a real run:** it hit the 800-page hard cap
+(`MAX_PAGES`) *without ever reaching the natural 45-day-window stop
+condition* — meaning total unfiltered category volume (all brands, all
+prices) is too high to exhaustively traverse in any sane page budget. Worse:
+because the crawl only got through a shallow, truncated slice of recent
+listings before running out of budget, ~1,820 listings that were correctly
+`active` from the previous (per-brand) run got marked `removed` — not
+because they'd actually left the site, but simply because this run's
+truncated coverage never got back around to seeing them again. Since
+`removed` is a terminal status by design (`storage.py` never reactivates
+one), that would have been silent, permanent, incorrect data corruption if
+left in place. It was caught, and `data/listings.json` /
+`data/raw/<date>.json` were restored from the last known-good commit before
+reverting the code.
 
-This does mean the daily crawl is a single sweep of the whole category
-instead of N per-brand searches — see §2 for why that's not obviously
-slower (arguably faster, since per-brand searches likely re-covered
-overlapping pages) and what it costs in job-timeout headroom.
+**Conclusion:** per-brand text search apparently narrows the result set down
+enough that exhaustive 45-day traversal is actually tractable (proven
+separately, twice) — the brand filter isn't just "deciding the answer early,"
+it's also what makes the crawl *finish* at all within a sane page/time
+budget. So the watchlist is back, just covering more ground than the
+original 6: Mercedes-Benz, Škoda, Audi, Volkswagen, Porsche, BMW (all with
+confirmed numeric `brand_id`s now), plus Volvo, Land Rover, Toyota, Lexus,
+Hyundai, Kia, Ford, Peugeot, Renault, Alfa Romeo, Fiat (free-text search,
+`brand_id` unconfirmed). `parser.py`'s title/id-based `_guess_brand()` is
+still in place as a fallback/cross-check, but `run.py`'s per-brand loop
+still sets the authoritative `brand` value from which search found it.
+
+If broader-than-watchlist coverage is wanted later, the fix isn't "no
+filter" — it's either a much larger MAX_PAGES with a much longer timeout (a
+few hours, impractical for a daily job), or more, narrower per-brand/
+per-price-bracket searches that each stay small enough to finish. Not
+pursued further for now.
 
 Within any given brand, the models actually worth watching for the 25k+ KM
 bracket in this market are the higher trims/newer years — e.g. VW Passat
