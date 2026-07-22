@@ -1,0 +1,76 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://github.com/ekrit/pik-scraper/schema/car_listing.schema.json",
+  "title": "CarListing",
+  "description": "Schema for a single olx.ba car listing record, as tracked in data/listings.json. See docs/RESEARCH.md for rationale.",
+  "type": "object",
+  "required": [
+    "id",
+    "url",
+    "brand",
+    "model",
+    "title",
+    "price_bam",
+    "year",
+    "mileage_km",
+    "first_seen_date",
+    "last_seen_date",
+    "status",
+    "price_history",
+    "scraped_at"
+  ],
+  "properties": {
+    "id": { "type": "string", "description": "olx.ba listing id, stable identity" },
+    "url": { "type": "string", "format": "uri" },
+    "brand": { "type": "string" },
+    "model": { "type": "string" },
+    "variant": { "type": ["string", "null"], "description": "Free-text trim/engine variant, best-effort parse" },
+    "title": { "type": "string" },
+
+    "price_bam": { "type": "number", "minimum": 0 },
+    "price_eur": { "type": "number", "minimum": 0, "description": "Derived via fixed peg 1 EUR = 1.95583 BAM" },
+    "price_per_km": { "type": ["number", "null"], "description": "Derived: price_bam / mileage_km" },
+
+    "year": { "type": "integer" },
+    "mileage_km": { "type": "integer", "minimum": 0 },
+    "fuel_type": { "type": ["string", "null"] },
+    "transmission": { "type": ["string", "null"] },
+    "power_kw": { "type": ["number", "null"] },
+    "power_hp": { "type": ["number", "null"] },
+    "engine_ccm": { "type": ["number", "null"] },
+    "drivetrain": { "type": ["string", "null"] },
+    "body_type": { "type": ["string", "null"] },
+    "doors": { "type": ["integer", "null"] },
+    "color": { "type": ["string", "null"] },
+
+    "registered_until": { "type": ["string", "null"], "description": "BiH-specific registration validity" },
+    "customs_paid": { "type": ["boolean", "null"], "description": "\"Carina placena\" — critical for import cost math" },
+    "first_owner": { "type": ["boolean", "null"] },
+    "damage_flag": { "type": ["boolean", "null"], "description": "Parsed from title/description keywords" },
+
+    "seller_type": { "type": ["string", "null"], "enum": ["private", "dealer", null] },
+    "location_city": { "type": ["string", "null"] },
+    "location_canton": { "type": ["string", "null"] },
+
+    "photo_count": { "type": ["integer", "null"] },
+    "description_length": { "type": ["integer", "null"] },
+
+    "first_seen_date": { "type": "string", "format": "date" },
+    "last_seen_date": { "type": "string", "format": "date" },
+    "days_listed": { "type": ["integer", "null"] },
+    "status": { "type": "string", "enum": ["active", "removed", "price_changed"] },
+    "price_history": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["date", "price_bam"],
+        "properties": {
+          "date": { "type": "string", "format": "date" },
+          "price_bam": { "type": "number", "minimum": 0 }
+        }
+      }
+    },
+
+    "scraped_at": { "type": "string", "format": "date-time" }
+  }
+}
