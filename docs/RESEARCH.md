@@ -336,10 +336,12 @@ This is the "runs every day, saves locally, commits and pushes back to your
 GitHub" piece, and it's already added. It's a scheduled GitHub Actions
 workflow — no server, no Docker, no separate infra to pay for or maintain:
 
-1. **Trigger:** `on: schedule` with a daily cron (`0 3 * * *`, 03:00 UTC —
-   change the hour if you want a different local time), plus
-   `workflow_dispatch` so you can also fire it manually from the repo's
-   Actions tab to test it.
+1. **Trigger:** `on: schedule` with a daily cron (`0 23 * * *`, 23:00 UTC =
+   01:00 BiH time during summer/CEST — cron is fixed UTC and doesn't shift
+   for DST, so this drifts to 00:00 local once BiH falls back to CET in
+   winter; adjust the hour then if you want it pinned to 1am local
+   year-round), plus `workflow_dispatch` so you can also fire it manually
+   from the repo's Actions tab to test it.
 2. **Runs the tests first** (`pytest tests/`), so a config change that
    breaks the state machine or parser fails loudly instead of running
    unattended and quietly corrupting `data/listings.json`.
@@ -373,4 +375,4 @@ workflow — no server, no Docker, no separate infra to pay for or maintain:
   that point either exempt the workflow's token from the rule or switch
   this to opening a PR each day instead of pushing directly.
 - Once merged, use the Actions tab's "Run workflow" button once to confirm
-  it actually runs end-to-end before waiting for the first 03:00 UTC firing.
+  it actually runs end-to-end before waiting for the first 23:00 UTC firing.

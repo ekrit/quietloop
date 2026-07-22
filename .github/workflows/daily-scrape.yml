@@ -2,9 +2,11 @@ name: Daily olx.ba scrape
 
 on:
   schedule:
-    # 03:00 UTC daily — BiH nighttime (UTC+1/+2), i.e. low-traffic hours.
-    # Adjust the hour if you'd rather it run at a different local time.
-    - cron: "0 3 * * *"
+    # 23:00 UTC daily = 01:00 in Bosnia during CEST/summer time (UTC+2, in
+    # effect now). Cron is fixed in UTC and doesn't shift for DST, so once
+    # BiH falls back to CET (UTC+1) in winter, this becomes 00:00 local —
+    # bump to "0 0 * * *" then if you want it to stay at 1am local.
+    - cron: "0 23 * * *"
   workflow_dispatch: {} # lets you trigger a run manually from the Actions tab
 
 permissions:
