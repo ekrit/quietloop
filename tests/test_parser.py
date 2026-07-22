@@ -1,85 +1,103 @@
-from datetime import date
+import json
+from datetime import datetime, timezone
 
-from scraper.parser import parse_detail_page, parse_search_results
+import pytest
 
-# NOTE: this fixture HTML is hand-written to approximate a plausible
-# olx.ba-style listing card — it has not been captured from the real site
-# (see docs/RESEARCH.md caveat). It exists to prove the regex-based parser
-# behaves sensibly on *a* reasonable structure, not to prove it matches the
-# real one. Re-validate against real HTML before trusting this in production.
-SEARCH_RESULTS_HTML = """
-<html><body>
-<div class="results">
-  <div class="card">
-    <a href="/artikal/volkswagen-passat-20-tdi-12345678" title="Volkswagen Passat 2.0 TDI">
-      Volkswagen Passat 2.0 TDI 2018
-    </a>
-    <div class="meta">
-      <span class="price">24.500 KM</span>
-      <span class="km">185.000 km</span>
-      <span class="location">Sarajevo</span>
-      <span class="posted">Prije 3 dana</span>
-    </div>
-  </div>
-  <div class="card">
-    <a href="/artikal/skoda-superb-20-tdi-87654321" title="Skoda Superb 2.0 TDI">
-      Skoda Superb 2.0 TDI 2020
-    </a>
-    <div class="meta">
-      <span class="price">32.000 KM</span>
-      <span class="km">95.000 km</span>
-      <span class="location">Banja Luka</span>
-      <span class="posted">Danas</span>
-    </div>
-  </div>
-</div>
-</body></html>
-"""
+from scraper.nuxt_payload import NuxtPayloadError
+from scraper.parser import parse_search_results
 
-DETAIL_PAGE_HTML = """
-<html><body>
-<h1>Volkswagen Passat 2.0 TDI</h1>
-<div class="attributes">
-  <div>Godiste: 2018.</div>
-  <div>Kilometraza: 185.000 km</div>
-  <div>Gorivo: Dizel</div>
-  <div>Karoserija: Limuzina</div>
-  <div>Boja: Siva</div>
-</div>
-<p>Auto je ocarinjen, prvi vlasnik, nije havarisan.</p>
-<img src="https://olx.ba/img/1.jpg" />
-<img src="https://olx.ba/img/2.jpg" />
-</body></html>
-"""
+# This mimics the REAL shape confirmed against the live site (see the
+# "Debug fetch" workflow run history and docs/RESEARCH.md) -- a Nuxt SSR
+# state payload with state.search.results as an array of listing objects,
+# with year/mileage/fuel_type inside special_labels rather than as
+# top-level fields. Values below are synthetic, but the shape is real.
+
+_PUBLISHED_TS = int(datetime(2026, 7, 20, 12, 0, 0, tzinfo=timezone.utc).timestamp())
 
 
-def test_parse_search_results_extracts_both_cards():
-    reference = date(2026, 7, 22)
-    listings = parse_search_results(SEARCH_RESULTS_HTML, reference_date=reference)
-
-    assert len(listings) == 2
-
-    passat, superb = listings
-    assert passat["id"] == "12345678"
-    assert passat["price_bam"] == 24500
-    assert passat["mileage_km"] == 185000
-    assert passat["year"] == 2018
-    assert passat["published_date"] == "2026-07-19"  # 3 days before reference
-
-    assert superb["id"] == "87654321"
-    assert superb["price_bam"] == 32000
-    assert superb["mileage_km"] == 95000
-    assert superb["year"] == 2020
-    assert superb["published_date"] == "2026-07-22"  # "Danas"
+def _make_html(results: list[dict]) -> str:
+    payload = {"state": {"search": {"results": results}}}
+    # Serialize as a JS object literal (valid JSON is valid JS), wrapped in
+    # the same (function(){...})() IIFE shape the real site uses.
+    js_object = json.dumps(payload)
+    return f"""
+    <html><body>
+    <script>window.__NUXT__=(function(){{return {js_object}}})()</script>
+    </body></html>
+    """
 
 
-def test_parse_detail_page_extracts_attributes_and_keywords():
-    result = parse_detail_page(DETAIL_PAGE_HTML)
+def _sample_item(**overrides) -> dict:
+    item = {
+        "id": 12345678,
+        "title": "Volkswagen Passat 2.0 TDI",
+        "price": 24500,
+        "display_price": "24.500 KM",
+        "date": _PUBLISHED_TS,
+        "images": ["https://cdn.example.com/1.jpg", "https://cdn.example.com/2.jpg"],
+        "user_type": "user",
+        "state": "used",
+        "status": "active",
+        "brand_id": 42,
+        "category_id": 18,
+        "city_id": 7,
+        "special_labels": [
+            {"value": "dizel", "label": "Gorivo", "unit": None},
+            {"value": "185.000", "label": "Kilometraža", "unit": "km"},
+            {"value": 2018, "label": "Godište", "unit": None},
+        ],
+    }
+    item.update(overrides)
+    return item
 
-    assert result["fuel_type"].strip() == "dizel"
-    assert result["body_type"].strip() == "limuzina"
-    assert result["color"].strip() == "siva"
-    assert result["customs_paid"] is True
-    assert result["first_owner"] is True
-    assert result["damage_flag"] is False
-    assert result["photo_count"] == 2
+
+def test_parse_search_results_extracts_real_shape():
+    html = _make_html([_sample_item()])
+    listings = parse_search_results(html)
+
+    assert len(listings) == 1
+    listing = listings[0]
+    assert listing["id"] == "12345678"
+    assert listing["title"] == "Volkswagen Passat 2.0 TDI"
+    assert listing["price_bam"] == 24500
+    assert listing["published_date"] == "2026-07-20"
+    assert listing["photo_count"] == 2
+    assert listing["seller_type"] == "private"
+    assert listing["year"] == 2018
+    assert listing["mileage_km"] == 185000
+    assert listing["fuel_type"] == "dizel"
+    assert listing["brand_id"] == 42
+
+
+def test_parse_search_results_multiple_items():
+    html = _make_html([_sample_item(id=1), _sample_item(id=2, title="Skoda Superb")])
+    listings = parse_search_results(html)
+
+    assert [l["id"] for l in listings] == ["1", "2"]
+
+
+def test_dealer_seller_type_detected():
+    html = _make_html([_sample_item(user_type="business")])
+    listing = parse_search_results(html)[0]
+    assert listing["seller_type"] == "dealer"
+
+
+def test_missing_special_label_leaves_field_absent():
+    item = _sample_item()
+    item["special_labels"] = [{"value": "dizel", "label": "Gorivo", "unit": None}]
+    html = _make_html([item])
+    listing = parse_search_results(html)[0]
+
+    assert listing["fuel_type"] == "dizel"
+    assert "year" not in listing
+    assert "mileage_km" not in listing
+
+
+def test_no_results_returns_empty_list():
+    html = _make_html([])
+    assert parse_search_results(html) == []
+
+
+def test_missing_nuxt_payload_raises():
+    with pytest.raises(NuxtPayloadError):
+        parse_search_results("<html><body>no payload here</body></html>")

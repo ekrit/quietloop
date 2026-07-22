@@ -1,254 +1,110 @@
-"""HTML parsing for olx.ba car search-results and listing detail pages.
+"""Parses olx.ba search-results pages via the embedded Nuxt SSR state
+payload (see scraper/nuxt_payload.py), rather than scraping HTML.
 
-IMPORTANT — written without direct access to the live site (network access
-to olx.ba was blocked in the sandbox this was built in, see docs/RESEARCH.md).
-Before trusting this against real data:
+Confirmed against the real site (docs/RESEARCH.md): `state.search.results`
+is a clean array of listing objects. Sample shape actually observed:
 
-  1. Save a real search-results page and a real listing detail page's HTML
-     locally, then run this module directly against them, e.g.:
-         python -c "from scraper.parser import parse_search_results as p; \\
-             print(p(open('sample_search.html').read()))"
-     and check the extracted fields actually look right.
-  2. If a page embeds a JSON state blob (`__NEXT_DATA__` for Next.js,
-     `__NUXT__` for Nuxt, or similar — common on modern OLX-family sites),
-     prefer wiring up direct field extraction from that over the regex
-     fallback below — it's far more robust to markup changes. `_find_next_data`
-     already detects a `__NEXT_DATA__` blob if present; only the actual field
-     mapping in `_parse_search_results_html` still needs replacing.
-  3. The HTML fallback below assumes each listing "card" is some ancestor of
-     an `<a href=".../artikal/...">` link, found by climbing parents until
-     climbing further would pull in a second listing's link (`_find_card`).
-     That heuristic is the first thing to tune if extracted price/mileage/
-     year look wrong or bleed between adjacent listings.
+    {
+      "id": 76750281, "title": "...", "price": 19000,
+      "display_price": "19.000 KM", "date": 1784752607,   # unix timestamp
+      "images": [...], "user_type": "user", "state": "used",
+      "status": "active", "brand_id": ..., "category_id": ...,
+      "special_labels": [
+        {"value": "dizel", "label": "Gorivo", "unit": null},
+        {"value": "260.000", "label": "Kilometraža", "unit": "km"},
+        {"value": 2012, "label": "Godište", "unit": null}
+      ]
+    }
+
+`special_labels` is where fuel/mileage/year actually live — they are NOT
+separate top-level fields. This was found by trial and error against the
+real payload (see the "Debug fetch" workflow run history), not guessed.
+
+NOT yet confirmed: the real listing detail-page URL. Search results carry
+no slug/url/permalink field at all, so `url` below is a best-effort guess
+(`{BASE_URL}/artikal/{id}`) and likely wrong — the site's real detail links
+were never found as plain <a href> tags on the search page, so the
+frontend must construct them client-side from a slug computed from the
+title. Detail-page enrichment (customs_paid, first_owner, damage_flag,
+registered_until, drivetrain, body_type, doors, color, engine_ccm,
+description_length, canton) is not implemented yet as a result — it needs
+a confirmed detail URL first. Everything else in the schema that's
+derivable from the search payload is filled in here.
 """
 from __future__ import annotations
 
-import hashlib
-import logging
-import re
 import unicodedata
-from datetime import date, timedelta
-from typing import Optional
+from datetime import datetime, timezone
 
-from bs4 import BeautifulSoup
+from .config import BASE_URL
+from .nuxt_payload import NuxtPayloadError, extract_nuxt_state
 
-logger = logging.getLogger(__name__)
-
-_PRICE_RE = re.compile(r"([\d][\d.,]*)\s*KM\b")
-_MILEAGE_RE = re.compile(r"([\d][\d.,]*)\s*km\b")
-_YEAR_RE = re.compile(r"\b(19[5-9]\d|20[0-4]\d)\b")
-_ITEM_HREF_RE = re.compile(r"/artikal/")
-_ID_FROM_URL_RE = re.compile(r"(\d{5,})/?(?:[?#].*)?$")
-
-_RELATIVE_DATE_RE = re.compile(r"prije\s+(\d+)\s+(dan|dana|sat|sati|minut|minuta)", re.IGNORECASE)
-_ABSOLUTE_DATE_RE = re.compile(r"\b(\d{1,2})\.(\d{1,2})\.(\d{4})\b")
-
-_MAX_CARD_ANCESTOR_LEVELS = 6
+__all__ = ["NuxtPayloadError", "parse_search_results"]
 
 
 def _strip_diacritics(text: str) -> str:
     return "".join(c for c in unicodedata.normalize("NFKD", text) if not unicodedata.combining(c))
 
 
-def _parse_number(text: str) -> float:
-    # BiH formatting uses "." as a thousands separator, e.g. "24.500"
-    cleaned = text.replace(".", "").replace(",", ".")
-    return float(cleaned)
-
-
-def _parse_published_date(text: str, reference: date) -> Optional[str]:
-    text_low = text.lower()
-    if "danas" in text_low:
-        return reference.isoformat()
-    if "jučer" in text_low or "juče" in text_low or "juce" in text_low:
-        return (reference - timedelta(days=1)).isoformat()
-
-    match = _RELATIVE_DATE_RE.search(text_low)
-    if match:
-        amount, unit = int(match.group(1)), match.group(2)
-        if unit.startswith("dan"):
-            return (reference - timedelta(days=amount)).isoformat()
-        return reference.isoformat()  # hours/minutes ago -> published today
-
-    match = _ABSOLUTE_DATE_RE.search(text)
-    if match:
-        day, month, year = (int(g) for g in match.groups())
-        try:
-            return date(year, month, day).isoformat()
-        except ValueError:
-            return None
-
-    return None
-
-
-def _listing_id_from_url(url: str) -> str:
-    match = _ID_FROM_URL_RE.search(url)
-    if match:
-        return match.group(1)
-    logger.warning("could not extract a numeric id from %s, falling back to a url hash", url)
-    return "hash-" + hashlib.sha1(url.encode("utf-8")).hexdigest()[:12]
-
-
-def _extract_year(title: str, card_text: str) -> Optional[int]:
-    match = _YEAR_RE.search(title)
-    if match:
-        return int(match.group(1))
-    # strip absolute posting dates (DD.MM.YYYY) first so a listing's "posted
-    # on" date can't be mistaken for its model year
-    stripped = _ABSOLUTE_DATE_RE.sub(" ", card_text)
-    match = _YEAR_RE.search(stripped)
-    return int(match.group(1)) if match else None
-
-
-def _find_card(anchor, max_levels: int = _MAX_CARD_ANCESTOR_LEVELS):
-    """Climb from an item link up to its enclosing "card", stopping as soon
-    as climbing further would pull in a sibling listing's link too — this is
-    structure-agnostic (doesn't depend on knowing real class names/depth),
-    unlike a fixed ancestor-level count."""
-    card = anchor
-    for _ in range(max_levels):
-        parent = card.parent
-        if parent is None:
-            break
-        if len(parent.find_all("a", href=_ITEM_HREF_RE)) > 1:
-            break
-        card = parent
-    return card
-
-
-def _find_next_data(soup: BeautifulSoup) -> Optional[dict]:
-    tag = soup.find("script", id="__NEXT_DATA__")
-    if tag and tag.string:
-        import json
-
-        try:
-            return json.loads(tag.string)
-        except json.JSONDecodeError:
-            return None
-    return None
-
-
-def parse_search_results(html: str, reference_date: Optional[date] = None) -> list[dict]:
-    reference_date = reference_date or date.today()
-    soup = BeautifulSoup(html, "lxml")
-
-    if _find_next_data(soup) is not None:
-        logger.warning(
-            "page embeds a __NEXT_DATA__ JSON blob but field extraction from it "
-            "isn't implemented yet — falling back to the HTML-regex parser, "
-            "which is less reliable. See parser.py module docstring, item 2."
-        )
-
-    return _parse_search_results_html(soup, reference_date)
-
-
-def _parse_search_results_html(soup: BeautifulSoup, reference_date: date) -> list[dict]:
-    listings: list[dict] = []
-    seen_urls: set[str] = set()
-
-    for anchor in soup.find_all("a", href=_ITEM_HREF_RE):
-        href = anchor.get("href", "")
-        if not href:
-            continue
-        url = href if href.startswith("http") else f"https://olx.ba{href}"
-        if url in seen_urls:
-            continue
-        seen_urls.add(url)
-
-        card_text = _find_card(anchor).get_text(" ", strip=True)
-
-        title = anchor.get_text(strip=True) or anchor.get("title", "")
-
-        price_match = _PRICE_RE.search(card_text)
-        price_bam = _parse_number(price_match.group(1)) if price_match else None
-
-        mileage_match = _MILEAGE_RE.search(card_text)
-        mileage_km = int(_parse_number(mileage_match.group(1))) if mileage_match else None
-
-        listings.append(
-            {
-                "id": _listing_id_from_url(url),
-                "url": url,
-                "title": title,
-                "price_bam": price_bam,
-                "mileage_km": mileage_km,
-                "year": _extract_year(title, card_text),
-                "published_date": _parse_published_date(card_text, reference_date),
-            }
-        )
-
-    return listings
-
-
-# --- Listing detail page enrichment ---------------------------------------
-#
-# Only called for brand-new listings (see scraper/run.py) — spec fields don't
-# change over a listing's life, so existing listings never need a re-fetch.
-
-_DETAIL_LABELS = {
+# Bosnian special_label -> our field name. Extend this as new labels turn
+# up in real data (e.g. "Broj vrata", "Snaga motora", "Karoserija").
+_SPECIAL_LABEL_FIELDS = {
     "godiste": "year",
     "kilometraza": "mileage_km",
     "gorivo": "fuel_type",
-    "mjenjac": "transmission",
-    "transmisija": "transmission",
-    "kubikaza": "engine_ccm",
-    "broj vrata": "doors",
-    "boja": "color",
-    "karoserija": "body_type",
-    "pogon": "drivetrain",
-    "registrovan do": "registered_until",
 }
-
-_DAMAGE_KEYWORDS = ["havarisan", "havarija", "udaren", "ostecen", "lupljen"]
-_CUSTOMS_KEYWORDS = ["carina placena", "ocarinjen"]
-_FIRST_OWNER_KEYWORDS = ["prvi vlasnik"]
-_NEGATION_WORDS = ["nije", "ne "]
-_NEGATION_WINDOW = 15
+_INTEGER_FIELDS = {"year", "mileage_km"}
 
 
-def _has_unnegated_keyword(folded_text: str, keywords: list[str]) -> bool:
-    """True if any keyword appears without a Bosnian negation ("nije"/"ne")
-    shortly before it — a naive substring check would flag "nije havarisan"
-    (NOT wrecked) as damaged, which is backwards."""
-    for keyword in keywords:
-        start = 0
-        while True:
-            idx = folded_text.find(keyword, start)
-            if idx == -1:
-                break
-            preceding = folded_text[max(0, idx - _NEGATION_WINDOW) : idx]
-            if not any(neg in preceding for neg in _NEGATION_WORDS):
-                return True
-            start = idx + len(keyword)
-    return False
+def _convert_result_item(item: dict) -> dict:
+    listing_id = str(item.get("id"))
 
+    published_date = None
+    raw_date = item.get("date")
+    if isinstance(raw_date, (int, float)):
+        published_date = datetime.fromtimestamp(raw_date, tz=timezone.utc).date().isoformat()
 
-def _extract_labeled_attributes(text: str) -> dict:
-    folded = _strip_diacritics(text.lower())
-    result: dict = {}
-    for label, field in _DETAIL_LABELS.items():
-        match = re.search(re.escape(label) + r"\s*[:\-]?\s*([^\n]{1,40})", folded)
-        if match:
-            result[field] = match.group(1).strip()
-    return result
+    extra: dict = {}
+    for entry in item.get("special_labels") or []:
+        label = _strip_diacritics(str(entry.get("label", "")).lower())
+        field = _SPECIAL_LABEL_FIELDS.get(label)
+        if not field:
+            continue
+        value = entry.get("value")
+        if field in _INTEGER_FIELDS:
+            try:
+                extra[field] = int(str(value).replace(".", ""))
+            except (TypeError, ValueError):
+                continue
+        else:
+            extra[field] = value
 
-
-def parse_detail_page(html: str) -> dict:
-    soup = BeautifulSoup(html, "lxml")
-    full_text = soup.get_text("\n", strip=True)
-    folded = _strip_diacritics(full_text.lower())
-
-    attributes = _extract_labeled_attributes(full_text)
-    photo_count = len(soup.select("img[src*='olx.ba']")) or None
-
-    customs_paid = _has_unnegated_keyword(folded, _CUSTOMS_KEYWORDS)
-    first_owner = _has_unnegated_keyword(folded, _FIRST_OWNER_KEYWORDS)
+    user_type = item.get("user_type")
+    seller_type = "private" if user_type in (None, "user") else "dealer"
 
     return {
-        **attributes,
-        "description_length": len(full_text),
-        "damage_flag": _has_unnegated_keyword(folded, _DAMAGE_KEYWORDS),
-        "customs_paid": customs_paid or None,
-        "first_owner": first_owner or None,
-        "photo_count": photo_count,
+        "id": listing_id,
+        # NEEDS VERIFICATION -- see module docstring; search results carry
+        # no url/slug field, this is an unconfirmed guess.
+        "url": f"{BASE_URL}/artikal/{listing_id}",
+        "title": item.get("title"),
+        "price_bam": item.get("price"),
+        "published_date": published_date,
+        "photo_count": len(item.get("images") or []),
+        "seller_type": seller_type,
+        "condition_raw": item.get("state"),
+        "brand_id": item.get("brand_id"),
+        "category_id": item.get("category_id"),
+        "city_id": item.get("city_id"),
+        **extra,
     }
+
+
+def parse_search_results(html: str) -> list[dict]:
+    """Returns listing dicts extracted from a search-results page's
+    embedded Nuxt payload. Raises NuxtPayloadError if the payload can't be
+    found/evaluated -- treat that as a hard per-page failure (the site's
+    structure likely changed), not as "zero results"."""
+    state = extract_nuxt_state(html)
+    results = state.get("state", {}).get("search", {}).get("results") or []
+    return [_convert_result_item(item) for item in results]

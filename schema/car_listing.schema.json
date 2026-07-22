@@ -8,7 +8,6 @@
     "id",
     "url",
     "brand",
-    "model",
     "title",
     "price_bam",
     "year",
@@ -22,11 +21,16 @@
   ],
   "properties": {
     "id": { "type": "string", "description": "olx.ba listing id, stable identity" },
-    "url": { "type": "string", "format": "uri" },
-    "brand": { "type": "string" },
-    "model": { "type": "string" },
+    "url": { "type": "string", "format": "uri", "description": "NOT YET CONFIRMED -- best-effort guess, see parser.py module docstring" },
+    "brand": { "type": "string", "description": "From our own watchlist search query, not parsed from the listing" },
+    "model": { "type": ["string", "null"], "description": "Not implemented yet -- would need title parsing against a known model-name list per brand" },
     "variant": { "type": ["string", "null"], "description": "Free-text trim/engine variant, best-effort parse" },
     "title": { "type": "string" },
+
+    "brand_id": { "type": ["integer", "null"], "description": "olx.ba's own numeric brand id, straight from the search payload" },
+    "category_id": { "type": ["integer", "null"] },
+    "city_id": { "type": ["integer", "null"], "description": "Numeric only -- no city-name lookup table built yet" },
+    "condition_raw": { "type": ["string", "null"], "description": "olx.ba's own condition string (e.g. \"used\"), unmapped" },
 
     "price_bam": { "type": "number", "minimum": 0 },
     "price_eur": { "type": "number", "minimum": 0, "description": "Derived via fixed peg 1 EUR = 1.95583 BAM" },

@@ -2,13 +2,18 @@
 
 For each watch-listed brand (scraper/config.py), pages through olx.ba search
 results newest-first for cars priced >= 25,000 KM and mileage >= 50,000 km,
-stops once past the 45-day publish window, enriches brand-new listings with
-a detail-page fetch, and merges the result into local JSON storage.
+stops once past the 45-day publish window, and merges the result into local
+JSON storage.
 
-See docs/RESEARCH.md for the full rationale. This has not been run against
-the live site (network access to olx.ba was blocked in the sandbox this was
-built in) — see the module docstrings in parser.py and config.py for what
-needs confirming first.
+Listing data (price, year, mileage, fuel type, etc.) comes from the search
+page's embedded Nuxt SSR state payload (see parser.py, nuxt_payload.py) —
+verified against the real live site via the "Debug fetch" workflow, not
+guessed. There is currently no detail-page enrichment step: the search
+payload carries no url/slug for individual listings, so the real detail
+page URL pattern isn't confirmed yet, and some schema fields (customs_paid,
+first_owner, damage_flag, registered_until, drivetrain, body_type, doors,
+color, engine_ccm, description_length, canton) aren't populated as a
+result. See parser.py's module docstring for details.
 """
 from __future__ import annotations
 
@@ -19,7 +24,7 @@ from urllib.parse import urlencode
 
 from . import config
 from .http_client import CircuitOpenError, PoliteSession
-from .parser import parse_detail_page, parse_search_results
+from .parser import parse_search_results
 from .storage import load_state, merge_into_state, save_raw_snapshot, save_state
 
 logger = logging.getLogger(__name__)
@@ -55,7 +60,7 @@ def scrape_brand(session: PoliteSession, brand: config.Brand, run_date: date) ->
         url = build_search_url(brand, page)
         logger.info("fetching %s (brand=%s, page=%d)", url, brand.name, page)
         response = session.get(url)
-        page_listings = parse_search_results(response.text, reference_date=run_date)
+        page_listings = parse_search_results(response.text)
 
         if not page_listings:
             break  # no more results at all
@@ -90,41 +95,6 @@ def scrape_brand(session: PoliteSession, brand: config.Brand, run_date: date) ->
     return collected
 
 
-def enrich_new_listings(session: PoliteSession, state: dict, listings: list[dict]) -> None:
-    """Fetch the detail page only for listings not already in state — spec
-    fields don't change over a listing's life, so existing listings never
-    need a detail re-fetch (docs/RESEARCH.md §2). Capped per run (see
-    config.MAX_DETAIL_FETCHES_PER_RUN) so an unusually large batch of new
-    listings — most likely on the very first cold-start run — can't blow
-    past the CI job's time budget."""
-    fetched = 0
-    skipped_due_to_cap = 0
-    for item in listings:
-        if item["id"] in state:
-            continue
-        if fetched >= config.MAX_DETAIL_FETCHES_PER_RUN:
-            skipped_due_to_cap += 1
-            continue
-        try:
-            response = session.get(item["url"])
-        except CircuitOpenError:
-            raise
-        except Exception:
-            logger.exception("failed to fetch detail page for %s", item.get("url"))
-            continue
-        finally:
-            fetched += 1
-        item.update(parse_detail_page(response.text))
-
-    if skipped_due_to_cap:
-        logger.warning(
-            "hit MAX_DETAIL_FETCHES_PER_RUN (%d) — %d new listings saved with "
-            "card-level fields only this run",
-            config.MAX_DETAIL_FETCHES_PER_RUN,
-            skipped_due_to_cap,
-        )
-
-
 def run(run_date: date | None = None) -> tuple[dict, bool]:
     """Returns (state, healthy). `healthy` is False if the circuit breaker
     tripped or every single brand failed — i.e. a likely systemic problem
@@ -151,7 +121,6 @@ def run(run_date: date | None = None) -> tuple[dict, bool]:
             except Exception:
                 brands_failed += 1
                 logger.exception("brand=%s failed, continuing with remaining brands", brand.name)
-        enrich_new_listings(session, state, list(all_listings.values()))
     except CircuitOpenError as exc:
         logger.error("stopping run early: %s", exc)
 

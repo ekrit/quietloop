@@ -17,14 +17,13 @@ later — this doc only covers the scraping approach, storage, and metrics.
   not just deprioritized. This bounds the whole dataset to a rolling 45-day window,
   which also happens to make the daily crawl cheaper (see §2).
 
-**Caveat up front:** this sandbox's network policy blocks outbound requests to
-`olx.ba` entirely (confirmed 403 at the proxy level, not a site anti-bot response) —
-I could not browse the live site or view its HTML/DOM directly. Everything below about
-URL structure and IDs comes from public search-engine results (cached OLX search-result
-URLs) plus general knowledge of how OLX Group sites are typically built. The items
-under "Needs live verification" must be checked by actually running requests against
-the site (from your machine, or a future session with network access) before relying
-on them.
+**Update:** this sandbox's own network policy still blocks outbound requests to
+`olx.ba` directly (confirmed 403 at the proxy level) — but GitHub Actions runners
+don't have that restriction, so the "Debug fetch" workflow (`.github/workflows/
+debug-fetch.yml`, manual dispatch only) was used to actually fetch and inspect
+real pages. Most of what was originally speculative below is now confirmed
+against live data — see §1a and §2 for what changed. Items still marked "needs
+verification" are genuinely still unconfirmed.
 
 ## 1. What we know about the site
 
@@ -72,20 +71,25 @@ crawled):
   confirmation (sign up for a key, check if a GET on listings-by-category works
   without a token, check ToS on what a key permits).
 
-### Needs live verification (do this first, from a machine with real access)
+### Still needs live verification
 
 1. Fetch `https://olx.ba/robots.txt` and read it — don't assume permissive rules.
-2. View-source a `/pretraga?category_id=18` results page: is it plain server-rendered
-   HTML, or does it embed a JSON state blob (`__NEXT_DATA__`, Nuxt `__NUXT__`, or
-   similar)? If a JSON blob is present, parsing that is far more robust than
-   scraping DOM/CSS, and survives markup redesigns.
-3. Confirm the exact price-filter query param name and units (KM, presumably).
+   Still not done — worth checking before running the schedule unattended long-term.
+2. ~~View-source a results page for a JSON state blob~~ — **done, see §1a**: it's
+   Nuxt (`__NUXT__`), not Next.js, and the real data lives in `state.search.results`.
+3. ~~Confirm the exact price-filter query param name~~ — **done, see §1a**:
+   `cijena_min` is confirmed present but confirmed *not enforced*; the client-side
+   filter in `run.py` is the real gate regardless of the param name.
 4. Resolve numeric `brand=` IDs for our target brands (Mercedes-Benz, Škoda, Audi,
    Volkswagen, Porsche, BMW — see §5) by loading each brand's filter page once and
-   reading the `brand=` value back from the URL/response.
+   reading the `brand=` value back from the URL/response, or from `brand_id` on a
+   real result item once you know which brand it belongs to. Still not done — the
+   scraper currently falls back to free-text `trazilica=<name>` search for every
+   brand as a result, which is slower and less precise.
 5. Check whether `api-documentation.olx.ba`'s listing-read endpoints work without
    auth, and what their ToS say about automated read access — if a documented,
-   sanctioned read API exists, prefer it over HTML scraping outright.
+   sanctioned read API exists, prefer it over the payload-extraction approach
+   outright. Still not done.
 6. Confirm the "sort by newest" order is actually keyed on **original publish
    date**, not on a "last bumped/renewed" date. Many classifieds sites let
    sellers pay/click to bump a stale listing back to the top — if the sort key
@@ -93,7 +97,74 @@ crawled):
    would break both the 45-day cutoff (a bumped 90-day-old listing could look
    "new") and the early pagination-stop described in §2. If the site exposes
    both dates, capture the true publish date on the listing itself rather than
-   trusting page position alone.
+   trusting page position alone. **Still unconfirmed** — a live test page had
+   listings that didn't look strictly newest-first, so this param may not even
+   do what its name suggests; needs a proper look at the site's real sort UI.
+
+## 1a. What's now confirmed (live data, via the Debug fetch workflow)
+
+The site is **Nuxt.js SSR**. Real listing data isn't in plain HTML `<a>`/`<div>`
+tags at all — a `/pretraga` page embeds a `window.__NUXT__=(function(a,b,c,
+...){...})(...)` script: a minified, deduplicated JS state dump, not JSON and
+not safely regex-scrapable (values are variable references, not literals).
+That killed the original "scrape HTML cards" plan in §2 outright — the first
+real run found the search pages had **zero** `/artikal/`-style links at all,
+zero listing links of any kind in the rendered HTML.
+
+The fix: since the payload is valid JS, evaluate it (see `scraper/
+nuxt_payload.py`) instead of guessing at regexes. It's untrusted third-party
+content, so it only ever runs inside a bare `vm.createContext({})` Node
+sandbox with no `require`/`fs`/`process`/network access — it can only compute
+a plain value. Confirmed working against the real site.
+
+**The actual shape**, `state.search.results` — a clean array, one object per
+listing:
+
+```jsonc
+{
+  "id": 76750281, "title": "...", "price": 19000,
+  "display_price": "19.000 KM", "date": 1784752607,   // unix timestamp!
+  "images": ["https://d4n0y8dshd77z.cloudfront.net/listings/76750281/..."],
+  "user_type": "user", "state": "used", "status": "active",
+  "brand_id": ..., "category_id": ..., "city_id": ..., "location": null,
+  "special_labels": [
+    { "value": "dizel", "label": "Gorivo", "unit": null },
+    { "value": "260.000", "label": "Kilometraža", "unit": "km" },
+    { "value": 2012, "label": "Godište", "unit": null }
+  ]
+}
+```
+
+Key findings from this:
+- **Fuel type / mileage / year are not top-level fields** — they live inside
+  `special_labels`, keyed by their Bosnian display label. `parser.py` maps
+  `Gorivo`→`fuel_type`, `Kilometraža`→`mileage_km`, `Godište`→`year`.
+- **`date` is a real Unix timestamp** — this is `published_date`, no more
+  guessing at "Prije 3 dana"-style relative text.
+- **Price is a clean number** (`price`) — no more parsing `"19.000 KM"` strings.
+- **`price` (25,000 KM floor) and `godiste_min` (2016 floor) are confirmed NOT
+  reliably enforced server-side** — a live request with both params still
+  returned a listing priced 19,000 KM from year 2012. The client-side safety
+  net in `run.py` (already there regardless) is what's actually doing this
+  filtering; the URL params are kept since they can't hurt but shouldn't be
+  trusted alone.
+- **No detail-page URL/slug anywhere in the search payload.** The real
+  `/artikal/...`-style link was never found as a live href, and there's no
+  `slug`/`url`/`permalink` field in the listing object either — the frontend
+  must construct it client-side from the title. `parser.py` currently guesses
+  `{BASE_URL}/artikal/{id}`, unconfirmed and likely wrong. This also means
+  **detail-page enrichment isn't implemented** — `customs_paid`, `first_owner`,
+  `damage_flag`, `registered_until`, `drivetrain`, `body_type`, `doors`,
+  `color`, `engine_ccm`, `description_length`, and `location_canton` are not
+  populated. Everything else the schema needs *is* available from the search
+  payload alone.
+- `state.search.aggregations.categories` gives real category id→name→count —
+  confirms cars sit under a real category (title said "u kategoriji
+  Automobili"), though the specific `category_id=18` used in our URLs wasn't
+  directly cross-checked against this list yet.
+- `location` was `null` on the one sample inspected (only a numeric `city_id`)
+  — no city-name lookup table has been built, so `location_city`/
+  `location_canton` remain unpopulated for now.
 
 ## 2. Recommended scraping approach
 
@@ -121,16 +192,17 @@ scope by definition. This has two effects:
   conflating "fell out of scope" with "actually gone" would quietly corrupt the
   days-on-market metric (see §5).
 
-- If the results page embeds a JSON blob (likely, per most modern OLX-family sites),
-  parse that directly — one clean object per listing, no brittle CSS selectors.
-- If it's pure server HTML, fall back to a targeted HTML parser (BeautifulSoup/lxml)
-  built around the listing-card structure, isolated in its own module so it's the
-  one thing to fix when the site's markup changes.
-- Only hit individual listing *detail* pages when something changed (new listing,
-  or a price move detected in the search-results summary) — the summary card
-  already carries most of the metrics we care about (title, price, year, mileage,
-  location, thumbnail count), so full detail fetches should be the minority of
-  requests.
+- **Confirmed (§1a):** parse the page by extracting and sandboxed-evaluating its
+  embedded `window.__NUXT__=...` payload (`scraper/nuxt_payload.py`), then read
+  `state.search.results` directly — clean objects, no CSS selectors, no
+  markup-fragility. This replaced the original "HTML card scraping" plan
+  entirely once real data showed there's no HTML to scrape in the first place.
+- There is currently **no detail-page fetch step** — the search payload alone
+  covers everything the schema needs except the fields listed in §1a
+  (customs_paid, first_owner, damage_flag, registered_until, drivetrain,
+  body_type, doors, color, engine_ccm, description_length, canton). Adding
+  detail-page enrichment back needs a confirmed real detail URL first (see
+  §1a's "no detail-page URL" finding).
 
 **Politeness / risk-reduction (non-negotiable, and check ToS against these before
 running for real):**
@@ -138,8 +210,6 @@ running for real):**
 - One request thread, 2–4s delay between requests, run once/day — this is a
   research project, not a real-time feed, so there's no reason to hammer it.
 - Identify with a normal desktop-browser User-Agent; don't spoof anything beyond that.
-- Cache aggressively: never re-fetch a detail page for a listing whose price and
-  status haven't changed since yesterday.
 - Build in a circuit-breaker: if response codes turn hostile (403/429 spike), stop
   and back off rather than retry aggressively.
 
@@ -176,44 +246,46 @@ This is intentionally simple (no SQLite yet, per your "that's for later") — pl
 JSON is easy to `git diff`, easy to load into pandas, and migrating to a real DB
 later is a separate, independent step that won't require touching the scraper.
 
-## 4. Listing schema — proposed fields
+## 4. Listing schema — fields
+
+Fields marked (✓) actually get populated by the current parser (confirmed
+against real data, §1a). Everything else is either unimplemented (model
+parsing, location lookup) or blocked on a confirmed detail-page URL.
 
 ```jsonc
 {
-  "id": "olx-12345678",              // olx.ba listing id, stable identity
-  "url": "https://olx.ba/artikal/...",
-  "brand": "Volkswagen",
-  "model": "Passat",                 // parsed from title/attributes
-  "variant": "2.0 TDI Highline",      // best-effort free text, unstructured
-  "title": "VW Passat B8 2.0 TDI ...",
+  "id": "12345678",                  // (✓) olx.ba's numeric listing id
+  "url": "https://olx.ba/artikal/...", // NOT CONFIRMED -- best-effort guess, see §1a
+  "brand": "Volkswagen",              // (✓) from our own watchlist query, not parsed
+  "model": null,                      // not implemented -- would need title parsing
+  "variant": null,                    // not implemented
+  "title": "VW Passat B8 2.0 TDI ...", // (✓)
 
-  "price_bam": 24500,
-  "price_eur": 12527,                // derived, fixed peg 1 EUR = 1.95583 BAM
-  "price_per_km": 0.31,              // derived: price / mileage_km
+  "price_bam": 24500,                 // (✓) clean number straight from the payload
+  "price_eur": 12527,                // (✓) derived, fixed peg 1 EUR = 1.95583 BAM
+  "price_per_km": 0.31,              // (✓) derived: price / mileage_km
 
-  "year": 2018,
-  "mileage_km": 178000,
-  "fuel_type": "Diesel",
-  "transmission": "Manual",
-  "power_kw": 110,
-  "power_hp": 150,
-  "engine_ccm": 1968,
-  "drivetrain": "FWD",
-  "body_type": "Sedan",
-  "doors": 4,
-  "color": "Grey",
+  "year": 2018,                       // (✓) from special_labels "Godište"
+  "mileage_km": 178000,               // (✓) from special_labels "Kilometraža"
+  "fuel_type": "dizel",               // (✓) from special_labels "Gorivo"
+  "transmission": null,                // not in the search payload
+  "power_kw": null, "power_hp": null, "engine_ccm": null,   // not in the search payload
+  "drivetrain": null, "body_type": null, "doors": null, "color": null,  // detail-page only
 
-  "registered_until": "2027-03",     // BiH-specific: registration validity
-  "customs_paid": true,               // "carina placena" — critical for import math
-  "first_owner": false,
-  "damage_flag": false,               // parsed from title/description keywords
+  "brand_id": 42, "category_id": 18, "city_id": 7,   // (✓) olx.ba's own numeric ids
+  "condition_raw": "used",            // (✓) olx.ba's own condition string, unmapped
 
-  "seller_type": "private",           // private vs dealer/salon
-  "location_city": "Sarajevo",
-  "location_canton": "KS",
+  "registered_until": null,           // detail-page only
+  "customs_paid": null,               // detail-page only
+  "first_owner": null,                // detail-page only
+  "damage_flag": null,                // detail-page only
 
-  "photo_count": 14,
-  "description_length": 320,
+  "seller_type": "private",           // (✓) derived from user_type ("user" -> private)
+  "location_city": null,              // city_id has no name lookup built yet
+  "location_canton": null,            // detail-page only
+
+  "photo_count": 14,                  // (✓) len(images)
+  "description_length": null,         // detail-page only
 
   "published_date": "2026-07-20",     // olx.ba's own publish date — the true
                                        // start of the clock for days_listed
@@ -307,28 +379,35 @@ python main.py --date 2026-07-22       # override the run date (backfills/testin
 
 The `scraper/` package: `config.py` (watchlist + filter/param constants),
 `http_client.py` (rate-limited session with retries + circuit breaker),
-`parser.py` (search-results + detail-page extraction — the part most likely
-to need fixing once run against real pages), `storage.py` (JSON state
-machine — active/removed/aged_out, price history, `days_listed`), `run.py`
-(orchestrator/CLI).
+`nuxt_payload.py` (extracts + sandboxed-evaluates the site's embedded Nuxt
+state payload — see §1a), `parser.py` (converts that payload's `state.
+search.results` into our listing schema), `storage.py` (JSON state machine
+— active/removed/aged_out, price history, `days_listed`), `run.py`
+(orchestrator/CLI), `debug_fetch.py` (manual diagnostic, not part of the
+daily pipeline — fetches one URL and reports its raw structure).
 
-**What's been verified vs. not:** `tests/` covers currency conversion and
-the full removed/aged_out/price-history state machine with real assertions,
-all passing. `parser.py` is exercised against a hand-written fixture that
-approximates a plausible listing card — it is **not** validated against real
-olx.ba HTML (this sandbox can't reach the site). Running `main.py` for real
-confirmed the whole pipeline (URL building, retries, brand loop, JSON
-output) wires together correctly, up to and including graceful handling of a
-network failure per brand — but every actual olx.ba request in that run hit
-the same network block, so nothing here confirms the parser matches real
-markup yet. Next step: run it from a machine with real access, save a
-sample page, and fix `parser.py`'s extraction against it (see that module's
-docstring for exactly what to check first).
+**Node is now a runtime dependency**, not just a nice-to-have — `parser.py`
+shells out to `node` to safely evaluate the site's payload. GitHub Actions
+runners have it preinstalled (confirmed working there); if running locally,
+make sure `node` is on PATH.
+
+**What's been verified:** `tests/` covers currency conversion, the full
+removed/aged_out/price-history state machine, and `parser.py` against a
+synthetic-but-real-shaped Nuxt payload fixture (mirroring the actual
+`state.search.results` structure confirmed live, §1a) — all passing (18
+tests). The parser has also been run against the **real live site** via the
+"Debug fetch" workflow multiple times, successfully deserializing the real
+payload and extracting real listings — this is a materially stronger
+verification level than the original plan, which could only guess at HTML
+structure. What's still open: the real detail-page URL (needed for the
+fields listed in §1a), whether the price/mileage/sort URL params do
+anything real (price and year are confirmed not enforced, §1a), and brand
+numeric IDs (still using free-text `trazilica=` search as a result).
 
 Dockerizing this is intentionally deferred — the script has no interactive
 input and reads all config from `scraper/config.py`, so wrapping it in a
-`Dockerfile` later should be a small step once the parser is confirmed
-against real data.
+`Dockerfile` later should be a small step (remembering to install `node` in
+the image alongside Python).
 
 ## 9. Deployment: `.github/workflows/daily-scrape.yml`
 
@@ -376,9 +455,9 @@ setup like this can actually die, and what's in place for each:
 | A step earlier in the job fails (bad dependency, broken test) | Later steps get skipped by default — no commit that day | The heartbeat/commit step uses `if: always()`, so it runs (and the schedule stays "alive") no matter which earlier step failed |
 | `git push` fails (race with a manual commit, transient network blip) | That day's commit exists only on the ephemeral runner and is lost the moment the job ends | Push is retried 3x with `git pull --rebase` in between; if all 3 fail, the job fails loudly (`::error::`) instead of silently losing data |
 | A bug causes an infinite/near-infinite loop (bad pagination, stuck request) | Job hangs, potentially burning the whole month's Actions-minutes budget in one run | `timeout-minutes: 60` at the job level, plus existing caps in `scraper/config.py` (`MAX_PAGES_PER_BRAND`, the circuit breaker) that should never let a normal run get anywhere close to that |
-| The very first run finds a huge backlog of "new" listings at once (cold-start backfill) and detail-fetching all of them blows past the time budget | First run times out mid-way, nothing gets saved that day | `MAX_DETAIL_FETCHES_PER_RUN` (300) caps detail-page fetches per run; anything beyond the cap is still saved with card-level fields (price/year/mileage/etc.), just without the detail-only fields, and isn't re-fetched later (see `run.py`'s `enrich_new_listings`) |
-| One brand's page is broken/blocked | Would otherwise crash the whole run, losing every other brand's data too | Per-brand try/except in `run.py` — one brand failing is logged and skipped, the rest still run |
+| One brand's page is broken/blocked, or the site's payload structure changes | Would otherwise crash the whole run, losing every other brand's data too | Per-brand try/except in `run.py` — a broken/changed page raises `NuxtPayloadError` from `parser.py`, which is caught, logged, and counted as that brand failing; the rest still run |
 | Repeated 403/429 responses (site blocking us) | Would otherwise retry forever, hammering the site | Circuit breaker in `http_client.py` stops the run after 3 consecutive hostile responses rather than retrying indefinitely |
+| `node` isn't available in some future runtime environment | `parser.py` would fail on every single page (a `NuxtPayloadError`, "node not found") | Confirmed present on GitHub Actions runners; if this ever moves to a different environment (e.g. a Dockerfile), it needs to install Node alongside Python |
 | `data/listings.json` gets corrupted (e.g. a run killed mid-write) | `load_state()` would throw and the whole run would fail | Not auto-healed — by design, since silently discarding it would erase months of history. Recover via `git checkout <previous-commit> -- data/listings.json`; the daily commits mean a good version is always one commit away |
 | Repo-level things outside the code's control: Actions disabled at the repo/org level, billing/quota issues on a private repo, the repo deleted or made archived | Schedule stops regardless of anything in this workflow | Not fixable from code — worth an occasional manual glance at the Actions tab. If this repo is private, keep an eye on included Actions minutes; public repos get unlimited minutes on standard runners |
 | Branch protection added later to the default branch | Direct push from the bot starts failing every day | Not set up preemptively (no protection exists yet) — if you add branch protection later, either exempt this workflow's token or switch the commit step to open a PR instead of pushing directly |

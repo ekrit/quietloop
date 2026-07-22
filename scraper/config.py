@@ -1,9 +1,9 @@
 """Runtime configuration for the olx.ba car scraper.
 
-Values flagged NEEDS VERIFICATION are best-effort guesses based on
-docs/RESEARCH.md — this was written without direct access to olx.ba
-(network access to the site was blocked in the sandbox this was built in).
-Confirm them against the live site before trusting results, then fix here.
+Values flagged NEEDS VERIFICATION are unconfirmed guesses; values flagged
+CONFIRMED (NOT) are backed by an actual live run against olx.ba via the
+"Debug fetch" GitHub Actions workflow (this sandbox itself can't reach the
+site directly — see docs/RESEARCH.md).
 """
 from __future__ import annotations
 
@@ -24,17 +24,24 @@ BASE_URL = "https://olx.ba"
 SEARCH_PATH = "/pretraga"
 CARS_CATEGORY_ID = 18
 
-# NEEDS VERIFICATION: param is confirmed present in real URLs; exact units
-# not confirmed from this environment (docs/RESEARCH.md, item 3).
+# NEEDS VERIFICATION: param is confirmed present in real URLs; whether it's
+# actually enforced server-side is unconfirmed (see PRICE/YEAR below, which
+# are confirmed NOT enforced despite being valid-looking param names).
 MILEAGE_MIN_PARAM = "kilometra-a_min"
-# NEEDS VERIFICATION: guessed param name for the price floor (docs item 3).
+# CONFIRMED NOT RELIABLY ENFORCED: a live run with cijena_min=25000 still
+# returned a listing priced at 19,000 KM. Kept in the URL since it can't
+# hurt, but the client-side safety net in run.py is what actually filters.
 PRICE_MIN_PARAM = "cijena_min"
-# NEEDS VERIFICATION: guessed sort param/value for "newest published first" —
-# also verify this is true publish date and not a bump/renew date
-# (docs/RESEARCH.md item 6).
+# NEEDS VERIFICATION: guessed sort param/value — page 1 with this param
+# still returned a listing published well outside a "newest first" sense
+# relative to others on the same page, so this may not be a real param at
+# all (or "newest" isn't a valid value). Needs a real look at the site's
+# actual sort UI/URL.
 SORT_PARAM = "sort"
 SORT_VALUE_NEWEST = "newest"
-# Confirmed present in real URLs (docs/RESEARCH.md §1) as a year-range filter.
+# CONFIRMED NOT RELIABLY ENFORCED: a live run with godiste_min=2016 still
+# returned a listing from 2012. Same story as PRICE_MIN_PARAM above — kept
+# in the URL, but run.py's client-side filter is the real gate.
 YEAR_MIN_PARAM = "godiste_min"
 
 # --- Scope filters (per your instructions) ---------------------------------
@@ -77,13 +84,6 @@ REQUEST_TIMEOUT_SECONDS = 20
 MAX_RETRIES = 3
 MAX_PAGES_PER_BRAND = 60  # hard safety cap regardless of cutoff logic
 CONSECUTIVE_EMPTY_PAGES_TO_STOP = 2
-# Caps detail-page fetches in a single run — mainly protects the very first
-# run (a cold-start backfill could otherwise find hundreds/thousands of
-# "new" listings at once and blow well past any CI job timeout). Listings
-# beyond the cap still get saved with search-card-level fields; they just
-# permanently miss the detail-only fields (fuel_type, engine, etc.) since
-# existing listings are never re-fetched for detail (see run.py).
-MAX_DETAIL_FETCHES_PER_RUN = 300
 
 USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
