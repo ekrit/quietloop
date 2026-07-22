@@ -1,0 +1,64 @@
+name: Daily olx.ba scrape
+
+on:
+  schedule:
+    # 03:00 UTC daily — BiH nighttime (UTC+1/+2), i.e. low-traffic hours.
+    # Adjust the hour if you'd rather it run at a different local time.
+    - cron: "0 3 * * *"
+  workflow_dispatch: {} # lets you trigger a run manually from the Actions tab
+
+permissions:
+  contents: write
+
+# Prevents two runs from overlapping (e.g. a manual trigger during the
+# scheduled run) and stepping on each other's commit/push.
+concurrency:
+  group: olx-scraper-daily
+  cancel-in-progress: false
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -r requirements-dev.txt
+
+      - name: Run tests
+        run: pytest tests/ -q
+
+      - name: Run scraper
+        id: scrape
+        run: |
+          set +e
+          python main.py
+          echo "exit_code=$?" >> "$GITHUB_OUTPUT"
+          exit 0 # never fail this step directly — the last step below does that instead
+
+      - name: Commit and push data
+        run: |
+          git config user.name "olx-scraper-bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add data/
+          if git diff --cached --quiet; then
+            echo "No data changes to commit."
+          else
+            git commit -m "Daily scrape: $(date -u +%F)"
+            git pull --rebase origin "${{ github.ref_name }}"
+            git push
+          fi
+
+      - name: Fail the job if the scraper itself failed
+        if: steps.scrape.outputs.exit_code != '0'
+        run: |
+          echo "main.py exited with code ${{ steps.scrape.outputs.exit_code }}."
+          echo "Any data collected before the failure was still committed above,"
+          echo "but this run needs attention — check the 'Run scraper' step's logs."
+          exit 1

@@ -327,5 +327,50 @@ docstring for exactly what to check first).
 
 Dockerizing this is intentionally deferred — the script has no interactive
 input and reads all config from `scraper/config.py`, so wrapping it in a
-`Dockerfile` + cron/GitHub Actions schedule later should be a small step
-once the parser is confirmed against real data.
+`Dockerfile` later should be a small step once the parser is confirmed
+against real data.
+
+## 9. Deployment: `.github/workflows/daily-scrape.yml`
+
+This is the "runs every day, saves locally, commits and pushes back to your
+GitHub" piece, and it's already added. It's a scheduled GitHub Actions
+workflow — no server, no Docker, no separate infra to pay for or maintain:
+
+1. **Trigger:** `on: schedule` with a daily cron (`0 3 * * *`, 03:00 UTC —
+   change the hour if you want a different local time), plus
+   `workflow_dispatch` so you can also fire it manually from the repo's
+   Actions tab to test it.
+2. **Runs the tests first** (`pytest tests/`), so a config change that
+   breaks the state machine or parser fails loudly instead of running
+   unattended and quietly corrupting `data/listings.json`.
+3. **Runs `python main.py`**, capturing its exit code without letting a
+   failure skip the commit step — partial data from a partially-successful
+   run still gets saved (matches the "partial data beats losing the whole
+   day" design in `scraper/run.py`).
+4. **Commits and pushes `data/`** using the workflow's own built-in
+   `GITHUB_TOKEN` (needs `permissions: contents: write`, already set) — no
+   extra secret/PAT needed. Skips the commit entirely if nothing changed
+   that day. Pulls-and-rebases before pushing as a small safety net against
+   a concurrent manual commit.
+5. **Fails the job at the end if `main.py` exited non-zero** (see the
+   `healthy` flag added to `scraper/run.py` — false if the circuit breaker
+   tripped or every single brand failed). A failed scheduled workflow run
+   shows up red in the Actions tab and GitHub emails whoever last edited the
+   workflow file — that's your signal something's actually wrong (e.g.
+   olx.ba started blocking the requests) rather than silently accumulating
+   empty snapshots for weeks.
+
+**What you need to do to actually turn it on:**
+- **Merge this branch into the repo's default branch** (or make it the
+  default branch). GitHub only fires `schedule` triggers from the workflow
+  file as it exists on the default branch — it will not fire from a
+  feature branch, no matter how long it sits there.
+- Check the repo's Settings → Actions → General → Workflow permissions is
+  set to "Read and write permissions" (some orgs/repos default to
+  read-only, which would make the push step fail with a 403).
+- If this repo ever gets branch protection rules on the default branch
+  (required reviews, etc.), the bot's direct push will start failing — at
+  that point either exempt the workflow's token from the rule or switch
+  this to opening a PR each day instead of pushing directly.
+- Once merged, use the Actions tab's "Run workflow" button once to confirm
+  it actually runs end-to-end before waiting for the first 03:00 UTC firing.

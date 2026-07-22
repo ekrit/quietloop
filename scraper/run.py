@@ -107,21 +107,31 @@ def enrich_new_listings(session: PoliteSession, state: dict, listings: list[dict
         item.update(parse_detail_page(response.text))
 
 
-def run(run_date: date | None = None) -> dict:
+def run(run_date: date | None = None) -> tuple[dict, bool]:
+    """Returns (state, healthy). `healthy` is False if the circuit breaker
+    tripped or every single brand failed — i.e. a likely systemic problem
+    (site blocking us, network down) rather than one bad page. Partial data
+    is still saved either way (see below) — this flag is purely so the
+    caller (see `main`) can surface a loud failure for an unattended daily
+    run instead of silently persisting an empty/near-empty snapshot."""
     run_date = run_date or date.today()
 
     session = PoliteSession()
     state = load_state()
 
     all_listings: dict[str, dict] = {}
+    brands_failed = 0
+    circuit_opened = False
     try:
         for brand in config.BRAND_WATCHLIST:
             try:
                 for item in scrape_brand(session, brand, run_date):
                     all_listings.setdefault(item["id"], item)  # de-dupe across brand queries
             except CircuitOpenError:
+                circuit_opened = True
                 raise  # systemic — stop the whole run rather than hammering
             except Exception:
+                brands_failed += 1
                 logger.exception("brand=%s failed, continuing with remaining brands", brand.name)
         enrich_new_listings(session, state, list(all_listings.values()))
     except CircuitOpenError as exc:
@@ -135,8 +145,14 @@ def run(run_date: date | None = None) -> dict:
     state = merge_into_state(state, scraped, run_date)
     save_state(state)
 
-    logger.info("run complete: %d listings scraped today, %d total tracked in state", len(scraped), len(state))
-    return state
+    healthy = not circuit_opened and brands_failed < len(config.BRAND_WATCHLIST)
+    logger.info(
+        "run complete: %d listings scraped today, %d total tracked in state, healthy=%s",
+        len(scraped),
+        len(state),
+        healthy,
+    )
+    return state, healthy
 
 
 def main() -> None:
@@ -145,7 +161,10 @@ def main() -> None:
     arg_parser.add_argument("--date", help="override run date (YYYY-MM-DD), mainly for backfills/testing")
     args = arg_parser.parse_args()
     run_date = date.fromisoformat(args.date) if args.date else None
-    run(run_date=run_date)
+    _, healthy = run(run_date=run_date)
+    if not healthy:
+        logger.error("run was unhealthy (see errors above) — exiting nonzero so this gets flagged")
+        raise SystemExit(1)
 
 
 if __name__ == "__main__":
