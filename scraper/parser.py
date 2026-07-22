@@ -36,7 +36,7 @@ from __future__ import annotations
 import unicodedata
 from datetime import datetime, timezone
 
-from .config import BASE_URL
+from .config import BASE_URL, CONFIRMED_BRAND_IDS, KNOWN_BRANDS
 from .nuxt_payload import NuxtPayloadError, extract_nuxt_state
 
 __all__ = ["NuxtPayloadError", "parse_search_results"]
@@ -44,6 +44,26 @@ __all__ = ["NuxtPayloadError", "parse_search_results"]
 
 def _strip_diacritics(text: str) -> str:
     return "".join(c for c in unicodedata.normalize("NFKD", text) if not unicodedata.combining(c))
+
+
+_FOLDED_KNOWN_BRANDS = [(name, _strip_diacritics(name).lower()) for name in KNOWN_BRANDS]
+
+
+def _guess_brand(title, brand_id) -> str | None:
+    """No per-brand querying anymore (see config.py) -- every listing in the
+    category gets scraped, so brand has to come from the listing itself.
+    Prefers the numeric brand_id when it's one we've confirmed; falls back
+    to matching KNOWN_BRANDS against the title text. Returns None rather
+    than guessing wrong when nothing matches."""
+    if brand_id in CONFIRMED_BRAND_IDS:
+        return CONFIRMED_BRAND_IDS[brand_id]
+    if not title:
+        return None
+    folded_title = _strip_diacritics(title).lower()
+    for name, folded_name in _FOLDED_KNOWN_BRANDS:
+        if folded_name in folded_title:
+            return name
+    return None
 
 
 # Bosnian special_label -> our field name. Extend this as new labels turn
@@ -88,6 +108,7 @@ def _convert_result_item(item: dict) -> dict:
         # no url/slug field, this is an unconfirmed guess.
         "url": f"{BASE_URL}/artikal/{listing_id}",
         "title": item.get("title"),
+        "brand": _guess_brand(item.get("title"), item.get("brand_id")),
         "price_bam": item.get("price"),
         "published_date": published_date,
         "photo_count": len(item.get("images") or []),

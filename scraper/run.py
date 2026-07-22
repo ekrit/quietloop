@@ -1,9 +1,12 @@
 """Orchestrates a single scraping run.
 
-For each watch-listed brand (scraper/config.py), pages through olx.ba search
-results newest-first for cars priced >= 25,000 KM and mileage >= 50,000 km,
-stops once past the 45-day publish window, and merges the result into local
-JSON storage.
+Pages through olx.ba's whole car category (scraper/config.py) newest-first,
+stops once past the 45-day publish window, and merges the result into
+local JSON storage. There's no per-brand watchlist/querying: the price/
+mileage/year filters already gate for "expensive enough to be worth
+analyzing" regardless of brand, so every car in the category gets scraped
+once and `brand` is derived from the listing itself (see parser.py's
+_guess_brand) rather than from which per-brand search found it.
 
 Listing data (price, year, mileage, fuel type, etc.) comes from the search
 page's embedded Nuxt SSR state payload (see parser.py, nuxt_payload.py) —
@@ -30,7 +33,7 @@ from .storage import load_state, merge_into_state, save_raw_snapshot, save_state
 logger = logging.getLogger(__name__)
 
 
-def build_search_url(brand: config.Brand, page: int) -> str:
+def build_search_url(page: int) -> str:
     params = {
         "category_id": config.CARS_CATEGORY_ID,
         config.MILEAGE_MIN_PARAM: config.MIN_MILEAGE_KM,
@@ -39,7 +42,6 @@ def build_search_url(brand: config.Brand, page: int) -> str:
         config.SORT_PARAM: config.SORT_VALUE_NEWEST,
         "page": page,
     }
-    params.update(brand.query_params())
     return f"{config.BASE_URL}{config.SEARCH_PATH}?{urlencode(params)}"
 
 
@@ -52,22 +54,42 @@ def within_window(published_date: str | None, run_date: date) -> bool:
     return age <= config.MAX_LISTING_AGE_DAYS
 
 
-def scrape_brand(session: PoliteSession, brand: config.Brand, run_date: date) -> list[dict]:
-    collected: list[dict] = []
-    consecutive_empty_pages = 0
+def scrape_all(session: PoliteSession, run_date: date) -> tuple[list[dict], int]:
+    """Pages through the whole category once. Returns (listings, pages_failed).
 
-    for page in range(1, config.MAX_PAGES_PER_BRAND + 1):
-        url = build_search_url(brand, page)
-        logger.info("fetching %s (brand=%s, page=%d)", url, brand.name, page)
-        response = session.get(url)
-        page_listings = parse_search_results(response.text)
+    A single bad page is logged and skipped (not fatal) so one glitch can't
+    lose the rest of the crawl — but too many in a row (site fully broken,
+    payload structure changed) stops the run early rather than burning the
+    whole page budget on guaranteed failures.
+    """
+    collected: dict[str, dict] = {}
+    consecutive_empty_pages = 0
+    consecutive_page_failures = 0
+    pages_failed = 0
+
+    for page in range(1, config.MAX_PAGES + 1):
+        url = build_search_url(page)
+        logger.info("fetching %s (page=%d)", url, page)
+        try:
+            response = session.get(url)
+            page_listings = parse_search_results(response.text)
+        except CircuitOpenError:
+            raise  # systemic — stop the whole run rather than hammering
+        except Exception:
+            pages_failed += 1
+            consecutive_page_failures += 1
+            logger.exception("page=%d failed, skipping", page)
+            if consecutive_page_failures >= config.CONSECUTIVE_PAGE_FAILURES_TO_STOP:
+                logger.error("stopping after %d consecutive page failures", consecutive_page_failures)
+                break
+            continue
+        consecutive_page_failures = 0
 
         if not page_listings:
             break  # no more results at all
 
         in_window = [item for item in page_listings if within_window(item.get("published_date"), run_date)]
         for item in in_window:
-            item["brand"] = brand.name
             # safety net: don't trust server-side filters blindly, and don't
             # trust the parser's extraction blindly either.
             if (item.get("price_bam") or 0) < config.MIN_PRICE_BAM:
@@ -76,14 +98,13 @@ def scrape_brand(session: PoliteSession, brand: config.Brand, run_date: date) ->
                 continue
             if (item.get("year") or 0) < config.MIN_YEAR:
                 continue
-            collected.append(item)
+            collected.setdefault(item["id"], item)  # dedupe against overlapping pagination
 
         if not in_window:
             consecutive_empty_pages += 1
             if consecutive_empty_pages >= config.CONSECUTIVE_EMPTY_PAGES_TO_STOP:
                 logger.info(
-                    "stopping brand=%s at page=%d: %d consecutive pages past the %d-day window",
-                    brand.name,
+                    "stopping at page=%d: %d consecutive pages past the %d-day window",
                     page,
                     consecutive_empty_pages,
                     config.MAX_LISTING_AGE_DAYS,
@@ -92,50 +113,43 @@ def scrape_brand(session: PoliteSession, brand: config.Brand, run_date: date) ->
         else:
             consecutive_empty_pages = 0
 
-    return collected
+    return list(collected.values()), pages_failed
 
 
 def run(run_date: date | None = None) -> tuple[dict, bool]:
     """Returns (state, healthy). `healthy` is False if the circuit breaker
-    tripped or every single brand failed — i.e. a likely systemic problem
-    (site blocking us, network down) rather than one bad page. Partial data
-    is still saved either way (see below) — this flag is purely so the
-    caller (see `main`) can surface a loud failure for an unattended daily
-    run instead of silently persisting an empty/near-empty snapshot."""
+    tripped or the run ended with zero listings collected — a likely
+    systemic problem (site blocking us, network down, payload structure
+    changed) rather than normal day-to-day variation. Partial data is still
+    saved either way (see below) — this flag is purely so the caller (see
+    `main`) can surface a loud failure for an unattended daily run instead
+    of silently persisting an empty/near-empty snapshot."""
     run_date = run_date or date.today()
 
     session = PoliteSession()
     state = load_state()
 
-    all_listings: dict[str, dict] = {}
-    brands_failed = 0
     circuit_opened = False
+    scraped: list[dict] = []
+    pages_failed = 0
     try:
-        for brand in config.BRAND_WATCHLIST:
-            try:
-                for item in scrape_brand(session, brand, run_date):
-                    all_listings.setdefault(item["id"], item)  # de-dupe across brand queries
-            except CircuitOpenError:
-                circuit_opened = True
-                raise  # systemic — stop the whole run rather than hammering
-            except Exception:
-                brands_failed += 1
-                logger.exception("brand=%s failed, continuing with remaining brands", brand.name)
+        scraped, pages_failed = scrape_all(session, run_date)
     except CircuitOpenError as exc:
+        circuit_opened = True
         logger.error("stopping run early: %s", exc)
 
     # whatever was collected before a failure still gets saved below —
     # partial data beats losing the whole day's run to one bad page.
 
-    scraped = list(all_listings.values())
     save_raw_snapshot(run_date, scraped)
     state = merge_into_state(state, scraped, run_date)
     save_state(state)
 
-    healthy = not circuit_opened and brands_failed < len(config.BRAND_WATCHLIST)
+    healthy = not circuit_opened and len(scraped) > 0
     logger.info(
-        "run complete: %d listings scraped today, %d total tracked in state, healthy=%s",
+        "run complete: %d listings scraped today (%d page failures), %d total tracked in state, healthy=%s",
         len(scraped),
+        pages_failed,
         len(state),
         healthy,
     )

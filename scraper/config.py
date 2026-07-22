@@ -7,9 +7,7 @@ site directly — see docs/RESEARCH.md).
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
 
 # --- Paths ----------------------------------------------------------------
 
@@ -52,54 +50,64 @@ MIN_YEAR = 2016  # inclusive — "younger than 2016" read as 2016 model year or 
 MAX_LISTING_AGE_DAYS = 45
 
 
-@dataclass
-class Brand:
-    name: str
-    # Prefer a numeric olx.ba `brand=<id>` filter once confirmed (precise).
-    # Until then, falls back to the free-text `trazilica=<name>` search
-    # param (works today, but can pick up false positives from listings
-    # that merely mention the brand in their description/title).
-    brand_id: Optional[int] = None
+# No brand watchlist / per-brand querying anymore (see docs/RESEARCH.md §6):
+# the price/mileage/year filters already gate for "expensive enough to be
+# worth analyzing" regardless of brand, so pre-selecting brands via the
+# search query was just deciding the answer before the data could. Instead
+# every car in the category gets scraped once, and `brand` is derived from
+# the listing itself (parser.py's _guess_brand): first via CONFIRMED_BRAND_IDS
+# below when the numeric id is known, otherwise by matching KNOWN_BRANDS
+# against the title text.
 
-    def query_params(self) -> dict:
-        if self.brand_id is not None:
-            return {"brand": self.brand_id, "brands": self.brand_id}
-        return {"trazilica": self.name}
+# Confirmed from real scraped data (data/listings.json) on 2026-07-22 --
+# these are the only olx.ba brand_ids actually verified so far. Extend this
+# as more brand_ids get confirmed from future scrapes (e.g. by checking
+# which id repeatedly co-occurs with a given brand name in titles).
+CONFIRMED_BRAND_IDS: dict[int, str] = {
+    89: "Volkswagen",
+    77: "Skoda",
+    7: "Audi",
+    56: "Mercedes-Benz",
+    69: "Porsche",
+    11: "BMW",
+}
 
-
-# See docs/RESEARCH.md §6 for rationale. brand_id values below are CONFIRMED
-# from real scraped data (data/listings.json) -- switching these to precise
-# ID-based filtering instead of free-text search, now that we know them.
-# New additions (Volvo through Fiat) still use free-text search since their
-# real brand_id is unconfirmed -- will get the same ID-based upgrade once a
-# few days of real data reveals theirs too.
-BRAND_WATCHLIST: list[Brand] = [
-    Brand("Volkswagen", brand_id=89),
-    Brand("Skoda", brand_id=77),
-    Brand("Audi", brand_id=7),
-    Brand("Mercedes-Benz", brand_id=56),
-    Brand("Porsche", brand_id=69),
-    Brand("BMW", brand_id=11),
-    Brand("Volvo"),
-    Brand("Land Rover"),
-    Brand("Toyota"),
-    Brand("Lexus"),
-    Brand("Hyundai"),
-    Brand("Kia"),
-    Brand("Ford"),
-    Brand("Peugeot"),
-    Brand("Renault"),
-    Brand("Alfa Romeo"),
-    Brand("Fiat"),
-]
+# Fallback brand-name matching against listing titles, for listings whose
+# brand_id isn't in CONFIRMED_BRAND_IDS above. Sorted longest-first so e.g.
+# "Land Rover"/"Alfa Romeo" match before any shorter/ambiguous substring
+# could. Not exhaustive -- a title that doesn't match any of these ends up
+# with brand=None rather than a guess, which is preferable to a wrong guess.
+KNOWN_BRANDS: list[str] = sorted(
+    [
+        "Volkswagen", "Skoda", "Audi", "Mercedes-Benz", "Porsche", "BMW",
+        "Volvo", "Land Rover", "Range Rover", "Toyota", "Lexus", "Hyundai",
+        "Kia", "Ford", "Peugeot", "Renault", "Alfa Romeo", "Fiat",
+        "Opel", "Citroen", "Seat", "Cupra", "Mini", "Jaguar", "Mazda",
+        "Honda", "Nissan", "Mitsubishi", "Suzuki", "Subaru", "Chevrolet",
+        "Dacia", "Jeep", "Chrysler", "Dodge", "Tesla", "Maserati",
+        "Bentley", "Rolls-Royce", "Lamborghini", "Ferrari", "Aston Martin",
+        "Lada", "Smart", "Saab", "Rover", "MG", "DS", "Infiniti", "Cadillac",
+    ],
+    key=len,
+    reverse=True,
+)
 
 # --- HTTP behavior (see docs/RESEARCH.md "Politeness / risk-reduction") ----
 
 REQUEST_DELAY_SECONDS = (2.0, 4.0)  # randomized delay range between requests
 REQUEST_TIMEOUT_SECONDS = 20
 MAX_RETRIES = 3
-MAX_PAGES_PER_BRAND = 60  # hard safety cap regardless of cutoff logic
+# Hard safety cap regardless of cutoff logic. There's now a single sweep of
+# the whole category (no per-brand loop), so this bounds the entire crawl,
+# not one brand's worth -- initial guess, not yet tuned against real total
+# category volume. 800 pages * ~3s avg delay =~ 40 min, comfortably inside
+# the 120-minute job timeout.
+MAX_PAGES = 800
 CONSECUTIVE_EMPTY_PAGES_TO_STOP = 2
+# If this many pages in a row fail to fetch/parse, stop rather than burning
+# the whole MAX_PAGES budget on guaranteed failures (e.g. site structure
+# changed, every page now raises NuxtPayloadError).
+CONSECUTIVE_PAGE_FAILURES_TO_STOP = 5
 
 USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "

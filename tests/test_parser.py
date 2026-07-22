@@ -67,6 +67,27 @@ def test_parse_search_results_extracts_real_shape():
     assert listing["mileage_km"] == 185000
     assert listing["fuel_type"] == "dizel"
     assert listing["brand_id"] == 42
+    assert listing["brand"] == "Volkswagen"  # guessed from title, brand_id=42 unconfirmed
+
+
+def test_brand_guessed_from_confirmed_id_even_if_title_is_generic():
+    # 89 is Volkswagen's real confirmed brand_id (see config.CONFIRMED_BRAND_IDS)
+    html = _make_html([_sample_item(brand_id=89, title="2018 diesel wagon, low mileage")])
+    listing = parse_search_results(html)[0]
+    assert listing["brand"] == "Volkswagen"
+
+
+def test_brand_guessed_from_title_prefers_longest_match():
+    # Must match "Land Rover", not stop at the shorter "Rover" substring
+    html = _make_html([_sample_item(brand_id=999999, title="Land Rover Discovery Sport")])
+    listing = parse_search_results(html)[0]
+    assert listing["brand"] == "Land Rover"
+
+
+def test_brand_none_when_nothing_matches():
+    html = _make_html([_sample_item(brand_id=999999, title="Some Random Car Model XYZ")])
+    listing = parse_search_results(html)[0]
+    assert listing["brand"] is None
 
 
 def test_parse_search_results_multiple_items():
