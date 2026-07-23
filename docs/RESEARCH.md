@@ -660,3 +660,62 @@ failure mode as §6's postmortem in a different guise. True "sold" vs.
 search-results payload alone (search results don't carry a post-removal
 status) — `removed` is the closest available signal, same limitation as
 cars.
+
+## 11. Import-worthiness scoring (`scraper/analysis.py`)
+
+The end goal stated for this project is a website/browser extension that
+compares products and surfaces what's worth importing into Bosnia for
+resale — this is the first pass at turning tracked listings into that
+actual ranking, rather than just raw counts.
+
+**What it can and can't measure:** there's no cross-border source-market
+price data anywhere in this pipeline — only what things sell for *in
+Bosnia*. So it cannot compute profit margin. What it measures instead is
+domestic demand strength (does this category's stock turn over, how fast,
+does it need discounting) as a proxy for import-worthiness. The report's
+`methodology_note` field says this explicitly rather than presenting a
+score as if it were a margin calculation.
+
+**Three signals, weighted 0.5 / 0.3 / 0.2 (first-pass judgment calls, not
+derived from anything yet):**
+- **Sell-through rate** (`removed / (removed + aged_out)`) — the core
+  "does this actually move" signal.
+- **Speed** (median `days_listed` among `removed` listings) — two groups
+  can share a sell-through rate while one moves in a week and the other in
+  six; speed is what actually matters for inventory turnover.
+- **Price firmness** (share of listings that never needed a price cut,
+  from `price_history`) — catches weak demand that sell-through rate alone
+  would miss (it did eventually sell, but only after discounting).
+
+Each is min-max normalized *within the comparison set* (so, e.g., "fast"
+for cars and "fast" for phones are graded on their own scales) into a
+single 0-100 `score` per group.
+
+**Grouping granularity is uneven, and that's an honest gap, not a design
+choice:** cars are grouped by `brand` (authoritative — tagged by which
+brand-specific search found the listing). Every other vertical is grouped
+only by `subcategory` (e.g. "Rucni Satovi") because there's no brand/model
+text-extraction built for non-car listings yet — the same kind of
+title-matching `parser.py` already does for cars (`_guess_brand`) would
+need to be built per vertical before, say, "which watch brand sells
+fastest" becomes answerable the way "which car brand sells fastest"
+already is.
+
+**Minimum sample size:** a group needs `n >= 10` total listings and
+`removed + aged_out >= 5` before it gets a score at all — below that it's
+marked `insufficient_data: true` with raw counts still shown, rather than
+computing a sell-through rate off 1-2 samples (a real 1-for-1 removal
+looks identical to noise). Checked against real data on 2026-07-23/24: of
+28 car brand groups, only 2 (Volkswagen, Audi) had enough resolved history
+after ~2 days of tracking to be scored — everything else correctly showed
+`insufficient_data` rather than a fabricated number. Expect most groups,
+especially the brand-new testing verticals, to stay `insufficient_data`
+for a while yet.
+
+**Output:** `data/import_worthiness_report.json` — per-car-brand groups,
+per-vertical per-subcategory groups, and a `vertical_ranking` (verticals
+ranked by their groups' average score) for comparing across categories at
+a glance. Regenerated daily by `.github/workflows/daily-analysis-report.yml`
+(cron `0 3 * * *`, comfortably after both scrape workflows even at their
+worst-case runtime), same stale-checkout-sync + retry-push pattern as the
+other two workflows.
