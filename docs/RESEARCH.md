@@ -571,3 +571,68 @@ means something needs a look.
   this to opening a PR each day instead of pushing directly.
 - Once merged, use the Actions tab's "Run workflow" button once to confirm
   it actually runs end-to-end before waiting for the first 23:00 UTC firing.
+
+## 10. Multi-category testing expansion (2026-07-23 -> 2026-08-01)
+
+Alongside cars, a time-boxed test of four more verticals was added: bicycles,
+PCs/laptops, expensive clothing, and sports/ski equipment. Explicitly a
+*test* to see whether any of these are worth tracking properly — not
+production, and not merged into the car pipeline's code path.
+
+**Category IDs** (real, from a live "Debug fetch" run against
+`https://olx.ba/pretraga`'s `state.search.aggregations.categories`, one
+level of `sub_categories` deep — not guessed):
+
+| Vertical | Subcategories used | Why not the whole parent |
+|---|---|---|
+| Bicycles | Bicikli (`category_id=22`, ~17.8k listings) | Single category, no parent-tree issue |
+| PCs & Laptops | Laptopi (`39`, ~29.9k), Desktop Racunari (`38`, ~12.2k) | Parent "Kompjuteri" (`5`, ~377k) is mostly accessories (mice, RAM, cables) — targeted the two subcategories that are actually computers |
+| Expensive Clothing | 9 subcategories: men's/women's sneakers, coats/jackets, bags, boots, heels (see `categories.py`) | Parent "Odjeca i obuca" (`465`) is ~213.7k listings — *larger than the entire Vozila category* that forced cars into per-brand querying (§6). No single "expensive" bucket exists; picked subcategories that plausibly carry premium items, skipped high-volume-but-cheap ones (t-shirts, etc.) |
+| Sports & Ski Equipment | 8 subcategories: skis, ski boots, mountain jackets, training weights/machines, football boots/jerseys | Parent "Sportska oprema" (`171`) is ~169.9k listings, same over-volume risk as clothing |
+
+The clothing/sports subcategory-watchlist choice is a direct application
+of §6's lesson: a flat sweep of a huge parent category doesn't finish
+within a sane page budget and, worse, causes false `removed` markings.
+Bicycles and PCs/laptops are small enough that this likely wasn't
+necessary, but the same pattern was used everywhere for consistency and
+because it costs nothing extra.
+
+**Price thresholds are first-pass judgment calls, not user-specified**
+(unlike cars' 25,000 KM): bicycles ≥500 KM, PCs/laptops ≥1,000 KM, clothing
+≥150 KM, sports/ski ≥200 KM. Expect these to move once real listing volume
+comes back, the same way cars' threshold moved 20k → 25k KM.
+
+**Architecture:** `scraper/categories.py` (Vertical/SubCategory config,
+data paths under `data/<slug>/`), `scraper/multi_run.py` (orchestrator —
+reuses `http_client.py`, `parser.py`, and a now-path-parameterized
+`storage.py` unchanged; each subcategory pages newest-first with the same
+consecutive-empty-pages-past-the-window stop condition as `run.py`'s
+`scrape_brand()`). Deliberately a separate module/workflow
+(`daily-scrape-verticals.yml`, cron `0 22 * * *`, one hour before cars)
+rather than folding into `run.py`/`daily-scrape.yml`, so this experiment
+can't destabilize the proven car pipeline. Same stale-checkout-sync fix
+applied from day one (see the 2026-07-23 fix on the car workflow).
+
+**Self-limiting:** `multi_run.run()` checks the run date against
+`categories.TESTING_END_DATE` (2026-08-01) and no-ops without scraping once
+past it, so the workflow doesn't rely on anyone remembering to disable it
+when the test window ends — though it's still expected to be reviewed and
+likely retired (or made permanent, if the data justifies it) around then.
+
+**Same removed/aged_out state machine as cars, reused as-is:** a listing
+missing from today's scan gets `removed` (disappeared before its 45-day
+window ran out — most likely sold or delisted) vs `aged_out` (still
+theoretically listed but past the window, so out of scope). This already
+covers "new listings get added, previously-tracked ones are kept and
+re-checked daily, and a removal reason gets recorded" — the daily scan
+must keep re-paging the *entire* still-active backlog each day, not just
+that day's brand-new postings, because disappearing from that scan is the
+only removal signal available (no confirmed per-listing detail-page URL
+exists to check an individual old listing directly — see `parser.py`'s
+docstring). Restricting the daily scan to only newly-posted items would
+save request budget but would break removal detection entirely, the same
+failure mode as §6's postmortem in a different guise. True "sold" vs.
+"expired" vs. "manually delisted" disambiguation isn't possible from the
+search-results payload alone (search results don't carry a post-removal
+status) — `removed` is the closest available signal, same limitation as
+cars.

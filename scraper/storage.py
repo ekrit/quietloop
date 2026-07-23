@@ -27,30 +27,35 @@ def _days_between(d1: date, d2: date) -> int:
     return (d2 - d1).days
 
 
-def load_state() -> dict:
-    if not STATE_PATH.exists():
+def load_state(state_path: Path = STATE_PATH) -> dict:
+    if not state_path.exists():
         return {}
-    with STATE_PATH.open("r", encoding="utf-8") as f:
+    with state_path.open("r", encoding="utf-8") as f:
         return json.load(f)
 
 
-def save_state(state: dict) -> None:
-    STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
-    tmp_path = STATE_PATH.with_suffix(".json.tmp")
+def save_state(state: dict, state_path: Path = STATE_PATH) -> None:
+    state_path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = state_path.with_suffix(".json.tmp")
     with tmp_path.open("w", encoding="utf-8") as f:
         json.dump(state, f, ensure_ascii=False, indent=2, sort_keys=True)
-    tmp_path.replace(STATE_PATH)
+    tmp_path.replace(state_path)
 
 
-def save_raw_snapshot(run_date: date, listings: list[dict]) -> Path:
-    RAW_DIR.mkdir(parents=True, exist_ok=True)
-    path = RAW_DIR / f"{run_date.isoformat()}.json"
+def save_raw_snapshot(run_date: date, listings: list[dict], raw_dir: Path = RAW_DIR) -> Path:
+    raw_dir.mkdir(parents=True, exist_ok=True)
+    path = raw_dir / f"{run_date.isoformat()}.json"
     with path.open("w", encoding="utf-8") as f:
         json.dump(listings, f, ensure_ascii=False, indent=2, sort_keys=True)
     return path
 
 
-def merge_into_state(state: dict, scraped: list[dict], run_date: date) -> dict:
+def merge_into_state(
+    state: dict,
+    scraped: list[dict],
+    run_date: date,
+    max_listing_age_days: int = MAX_LISTING_AGE_DAYS,
+) -> dict:
     """Apply one day's scraped listings onto the state table (mutated and
     returned). See module docstring and docs/RESEARCH.md §2/§5 for the
     removed vs. aged_out distinction.
@@ -104,13 +109,13 @@ def merge_into_state(state: dict, scraped: list[dict], run_date: date) -> dict:
         age_days = _days_between(date.fromisoformat(published), run_date) if published else None
 
         if listing_id not in seen_ids:
-            if age_days is not None and age_days > MAX_LISTING_AGE_DAYS:
+            if age_days is not None and age_days > max_listing_age_days:
                 record["status"] = "aged_out"
                 record["aged_out_date"] = run_date.isoformat()
             else:
                 record["status"] = "removed"
                 record["removed_date"] = run_date.isoformat()
-        elif age_days is not None and age_days > MAX_LISTING_AGE_DAYS:
+        elif age_days is not None and age_days > max_listing_age_days:
             record["status"] = "aged_out"
             record["aged_out_date"] = run_date.isoformat()
 
