@@ -58,6 +58,8 @@ def report_nuxt_state(html: str) -> None:
         print("--- state.search.aggregations.categories ---")
         for cat in categories:
             print(f"  id={cat.get('id')} name={cat.get('name')!r} count={cat.get('count')}")
+            for sub in cat.get("sub_categories") or []:
+                print(f"    sub id={sub.get('id')} name={sub.get('name')!r} count={sub.get('count')}")
 
     out_path = Path("/tmp/nuxt_payload.json")
     out_path.write_text(json.dumps(data, ensure_ascii=False, indent=2)[:200000])
