@@ -34,6 +34,26 @@ jobs:
       - name: Check out repo
         uses: actions/checkout@v4
 
+      # actions/checkout above pins to whatever commit was HEAD when this run
+      # was *created*, not when its job actually starts -- if this run sat
+      # queued behind another one in the `olx-scraper-daily` concurrency
+      # group (that's the point of the group: serialize job *execution*, not
+      # re-resolve the ref), it would otherwise scrape and merge against a
+      # stale data/listings.json, then fail to push once it discovers the
+      # other run already moved main forward. Realized this the hard way on
+      # 2026-07-23: a manual validation run and the nightly schedule
+      # overlapped, the second one queued correctly but still checked out
+      # the pre-queue commit, and its push died on an unresolvable
+      # data/listings.json merge conflict (scrape itself was fine, healthy=
+      # true -- only the push failed). Forcing the worktree to the actual
+      # current tip right before scraping means merge_into_state() always
+      # starts from the freshest committed state, so the eventual push is
+      # always a clean fast-forward.
+      - name: Sync to the current branch tip (guards against a stale checkout if this run queued behind another)
+        run: |
+          git fetch origin "${{ github.ref_name }}"
+          git reset --hard "origin/${{ github.ref_name }}"
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
