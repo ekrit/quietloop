@@ -576,9 +576,10 @@ means something needs a look.
 
 Alongside cars, a time-boxed test of more verticals was added: bicycles,
 PCs/laptops, expensive clothing, sports/ski/outdoor equipment, mobile
-phones, watches, and gaming consoles. Explicitly a *test* to see whether
-any of these are worth tracking properly — not production, and not merged
-into the car pipeline's code path.
+phones, watches, gaming consoles, tablets, smartwatches, and digital
+cameras. Explicitly a *test* to see whether any of these are worth
+tracking properly — not production, and not merged into the car
+pipeline's code path.
 
 **Category IDs** (real, from a live "Debug fetch" run against
 `https://olx.ba/pretraga`'s `state.search.aggregations.categories`, one
@@ -593,6 +594,9 @@ level of `sub_categories` deep — not guessed):
 | Mobile Phones | Mobiteli (`31`, ~47.3k) | Single category |
 | Watches | Rucni Satovi (`244`, ~26.0k, under parent "Nakit i Satovi" id=68) | Single category — picked over the rest of the jewelry tree since watches specifically have the clearest resale/import arbitrage story |
 | Gaming Consoles | Konzole (`292`, ~8.4k, under parent "Video igre" id=289) | Single category |
+| Tablets | Tablet PCs (`1495`, ~7.6k, under parent "Mobilni uredaji" id=3) | Single category, direct sibling of phones |
+| Smartwatches | Smartwatch (`2076`, ~20.7k, under parent "Mobilni uredaji" id=3) | Single category |
+| Digital Cameras | Digitalni fotoaparati (`112`, ~4.8k, under parent "Tehnika" id=14) | Single category |
 
 The clothing/sports subcategory-watchlist choice is a direct application
 of §6's lesson: a flat sweep of a huge parent category doesn't finish
@@ -604,18 +608,23 @@ everywhere for consistency and because it costs nothing extra.
 **Price thresholds are first-pass judgment calls, not user-specified**
 (unlike cars' 25,000 KM): bicycles ≥500 KM, PCs/laptops ≥1,000 KM, clothing
 ≥150 KM, sports/ski/outdoor ≥200 KM, phones ≥500 KM, watches ≥300 KM,
-consoles ≥300 KM. Expect these to move once real listing volume comes
-back, the same way cars' threshold moved 20k → 25k KM.
+consoles ≥300 KM, tablets ≥400 KM, smartwatches ≥300 KM, cameras ≥300 KM.
+Expect these to move once real listing volume comes back, the same way
+cars' threshold moved 20k → 25k KM.
 
-**Why phones/watches/consoles over other candidates:** asked what else
-might be worth importing/reselling, the reasoning was value-density and
-liquidity — items worth the shipping/import cost with a proven, active
-resale market — over categories that are either too heavy to ship
-profitably (large appliances, TVs) or too illiquid/niche to generalize a
-strategy for (collectibles). Phones and watches in particular are classic
-arbitrage categories: high value per unit of size/weight, and (for
-watches especially) resale value that holds or appreciates rather than
-depreciating the way most goods do.
+**Why these over other candidates:** asked what else might be worth
+importing/reselling, the reasoning was value-density and liquidity —
+items worth the shipping/import cost with a proven, active resale market
+— over categories that are either too heavy to ship profitably (large
+appliances, TVs) or too illiquid/niche to generalize a strategy for
+(collectibles, most vehicle parts, tools/machinery, books). Phones and
+watches in particular are classic arbitrage categories: high value per
+unit of size/weight, and (for watches especially) resale value that holds
+or appreciates rather than depreciating the way most goods do. Tablets
+and smartwatches follow the same logic as phones/watches. Fine jewelry
+(rings, necklaces, bracelets) was considered and explicitly dropped at
+the user's request, leaving watches as the sole jewelry-adjacent
+category.
 
 **Architecture:** `scraper/categories.py` (Vertical/SubCategory config,
 data paths under `data/<slug>/`), `scraper/multi_run.py` (orchestrator —

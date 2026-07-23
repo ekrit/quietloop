@@ -5,7 +5,7 @@ untouched. This module is a *separate*, explicitly-labeled-as-testing
 extension covering more verticals the user wants data on before deciding
 whether any of them are worth pursuing for real: bicycles, PCs/laptops,
 expensive clothing, sports/ski/outdoor equipment, mobile phones, watches,
-and gaming consoles.
+gaming consoles, tablets, smartwatches, and digital cameras.
 
 Real category IDs below came from a live "Debug fetch" run against
 https://olx.ba/pretraga (state.search.aggregations.categories, including
@@ -127,5 +127,23 @@ VERTICALS: list[Vertical] = [
         slug="consoles",
         min_price_bam=300,
         subcategories=[SubCategory("Konzole", 292)],
+    ),
+    Vertical(
+        name="Tablets",
+        slug="tablets",
+        min_price_bam=400,
+        subcategories=[SubCategory("Tablet PCs", 1495)],
+    ),
+    Vertical(
+        name="Smartwatches",
+        slug="smartwatches",
+        min_price_bam=300,
+        subcategories=[SubCategory("Smartwatch", 2076)],
+    ),
+    Vertical(
+        name="Digital Cameras",
+        slug="cameras",
+        min_price_bam=300,
+        subcategories=[SubCategory("Digitalni fotoaparati", 112)],
     ),
 ]
