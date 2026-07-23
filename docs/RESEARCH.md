@@ -574,10 +574,11 @@ means something needs a look.
 
 ## 10. Multi-category testing expansion (2026-07-23 -> 2026-08-01)
 
-Alongside cars, a time-boxed test of four more verticals was added: bicycles,
-PCs/laptops, expensive clothing, and sports/ski equipment. Explicitly a
-*test* to see whether any of these are worth tracking properly — not
-production, and not merged into the car pipeline's code path.
+Alongside cars, a time-boxed test of more verticals was added: bicycles,
+PCs/laptops, expensive clothing, sports/ski/outdoor equipment, mobile
+phones, watches, and gaming consoles. Explicitly a *test* to see whether
+any of these are worth tracking properly — not production, and not merged
+into the car pipeline's code path.
 
 **Category IDs** (real, from a live "Debug fetch" run against
 `https://olx.ba/pretraga`'s `state.search.aggregations.categories`, one
@@ -588,19 +589,33 @@ level of `sub_categories` deep — not guessed):
 | Bicycles | Bicikli (`category_id=22`, ~17.8k listings) | Single category, no parent-tree issue |
 | PCs & Laptops | Laptopi (`39`, ~29.9k), Desktop Racunari (`38`, ~12.2k) | Parent "Kompjuteri" (`5`, ~377k) is mostly accessories (mice, RAM, cables) — targeted the two subcategories that are actually computers |
 | Expensive Clothing | 9 subcategories: men's/women's sneakers, coats/jackets, bags, boots, heels (see `categories.py`) | Parent "Odjeca i obuca" (`465`) is ~213.7k listings — *larger than the entire Vozila category* that forced cars into per-brand querying (§6). No single "expensive" bucket exists; picked subcategories that plausibly carry premium items, skipped high-volume-but-cheap ones (t-shirts, etc.) |
-| Sports & Ski Equipment | 8 subcategories: skis, ski boots, mountain jackets, training weights/machines, football boots/jerseys | Parent "Sportska oprema" (`171`) is ~169.9k listings, same over-volume risk as clothing |
+| Sports, Ski & Outdoor Equipment | 9 subcategories: skis, ski boots, mountain jackets, training weights/machines, football boots/jerseys, camping gear (`Ostala kamp oprema`=1278, the closest real match to "hiking gear" — no dedicated hiking-only subcategory exists) | Parent "Sportska oprema" (`171`) is ~169.9k listings, same over-volume risk as clothing |
+| Mobile Phones | Mobiteli (`31`, ~47.3k) | Single category |
+| Watches | Rucni Satovi (`244`, ~26.0k, under parent "Nakit i Satovi" id=68) | Single category — picked over the rest of the jewelry tree since watches specifically have the clearest resale/import arbitrage story |
+| Gaming Consoles | Konzole (`292`, ~8.4k, under parent "Video igre" id=289) | Single category |
 
 The clothing/sports subcategory-watchlist choice is a direct application
 of §6's lesson: a flat sweep of a huge parent category doesn't finish
 within a sane page budget and, worse, causes false `removed` markings.
-Bicycles and PCs/laptops are small enough that this likely wasn't
-necessary, but the same pattern was used everywhere for consistency and
-because it costs nothing extra.
+Bicycles, PCs/laptops, phones, watches, and consoles are small/single
+enough that this likely wasn't necessary, but the same pattern was used
+everywhere for consistency and because it costs nothing extra.
 
 **Price thresholds are first-pass judgment calls, not user-specified**
 (unlike cars' 25,000 KM): bicycles ≥500 KM, PCs/laptops ≥1,000 KM, clothing
-≥150 KM, sports/ski ≥200 KM. Expect these to move once real listing volume
-comes back, the same way cars' threshold moved 20k → 25k KM.
+≥150 KM, sports/ski/outdoor ≥200 KM, phones ≥500 KM, watches ≥300 KM,
+consoles ≥300 KM. Expect these to move once real listing volume comes
+back, the same way cars' threshold moved 20k → 25k KM.
+
+**Why phones/watches/consoles over other candidates:** asked what else
+might be worth importing/reselling, the reasoning was value-density and
+liquidity — items worth the shipping/import cost with a proven, active
+resale market — over categories that are either too heavy to ship
+profitably (large appliances, TVs) or too illiquid/niche to generalize a
+strategy for (collectibles). Phones and watches in particular are classic
+arbitrage categories: high value per unit of size/weight, and (for
+watches especially) resale value that holds or appreciates rather than
+depreciating the way most goods do.
 
 **Architecture:** `scraper/categories.py` (Vertical/SubCategory config,
 data paths under `data/<slug>/`), `scraper/multi_run.py` (orchestrator —

@@ -2,9 +2,10 @@
 
 Cars (config.py/run.py) are the proven, production pipeline and are left
 untouched. This module is a *separate*, explicitly-labeled-as-testing
-extension covering four more verticals the user wants data on before
-deciding whether any of them are worth pursuing for real: bicycles, PCs/
-laptops, expensive clothing, and sports/ski equipment.
+extension covering more verticals the user wants data on before deciding
+whether any of them are worth pursuing for real: bicycles, PCs/laptops,
+expensive clothing, sports/ski/outdoor equipment, mobile phones, watches,
+and gaming consoles.
 
 Real category IDs below came from a live "Debug fetch" run against
 https://olx.ba/pretraga (state.search.aggregations.categories, including
@@ -94,7 +95,7 @@ VERTICALS: list[Vertical] = [
         ],
     ),
     Vertical(
-        name="Sports & Ski Equipment",
+        name="Sports, Ski & Outdoor Equipment",
         slug="sports",
         min_price_bam=200,
         subcategories=[
@@ -106,6 +107,25 @@ VERTICALS: list[Vertical] = [
             SubCategory("Ostale sprave za trening", 1301),  # training machines
             SubCategory("Kopacke", 1349),  # football boots
             SubCategory("Fudbalski dresovi", 1347),  # football jerseys
+            SubCategory("Ostala kamp oprema", 1278),  # hiking/camping gear -- closest real subcategory to "hiking gear"
         ],
+    ),
+    Vertical(
+        name="Mobile Phones",
+        slug="phones",
+        min_price_bam=500,
+        subcategories=[SubCategory("Mobiteli", 31)],
+    ),
+    Vertical(
+        name="Watches",
+        slug="watches",
+        min_price_bam=300,
+        subcategories=[SubCategory("Rucni Satovi", 244)],
+    ),
+    Vertical(
+        name="Gaming Consoles",
+        slug="consoles",
+        min_price_bam=300,
+        subcategories=[SubCategory("Konzole", 292)],
     ),
 ]
