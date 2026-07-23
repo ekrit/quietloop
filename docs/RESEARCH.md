@@ -413,12 +413,25 @@ that wasn't on the watchlist at all. `config.py` also has a real
 unlike the original 6 it isn't confirmed via a live scrape yet.
 
 `BRAND_WATCHLIST` was expanded from 17 to 30, adding: Opel (`brand_id=64`,
-unconfirmed-via-live-run), Citroën, Seat, Nissan, Honda, Mazda, Mitsubishi,
-Suzuki, Dacia, Chevrolet, Jeep, Subaru, Mini — all free-text search, no
-confirmed `brand_id`. All 13 names were already present in `KNOWN_BRANDS`
-for title-fallback matching, just not previously queried directly. Job
-timeout bumped 120→180 minutes ahead of the first real run at this size
-(see `daily-scrape.yml`).
+unconfirmed-via-live-run at the time), Citroën, Seat, Nissan, Honda, Mazda,
+Mitsubishi, Suzuki, Dacia, Chevrolet, Jeep, Subaru, Mini — all free-text
+search, no confirmed `brand_id`. All 13 names were already present in
+`KNOWN_BRANDS` for title-fallback matching, just not previously queried
+directly. Job timeout bumped 120→180 minutes ahead of the first real run
+at this size (see `daily-scrape.yml`).
+
+**Validated against the live site the same day:** a real run took 44
+minutes (up from ~32.5 min at 17 brands, well under the 180-min timeout),
+grew tracked listings 3,510→3,992 with only 17 total `removed` (no mass
+false-removal spike, unlike §6's incident). 28 of the 30 manufacturers
+returned at least one listing. `brand=64` for Opel came back with 80
+listings, all genuinely Opel (Mokka X, Grandland X, Insignia, etc.) —
+promoted from guess to `CONFIRMED_BRAND_IDS`. The only two manufacturers
+with zero results, Lexus and Subaru, were already on the watchlist before
+this expansion (not new), so this isn't a regression from today's change —
+most likely genuine rarity of those brands in Bosnia's 25k+ KM / 50k+ km /
+2016+ / 45-day-window segment rather than a scraper problem, though it's
+worth a second look if it persists over the next several days.
 
 If broader-than-watchlist coverage is wanted later, the fix isn't "no
 filter" — it's either a much larger MAX_PAGES with a much longer timeout (a

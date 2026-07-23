@@ -79,11 +79,11 @@ class Brand:
 
 
 # brand_id values below are CONFIRMED from real scraped data
-# (data/listings.json) -- precise ID-based filtering for these 6; the rest
+# (data/listings.json) -- precise ID-based filtering for these 7; the rest
 # still use free-text search since their real brand_id is unconfirmed.
 #
 # Expanded 2026-07-22 from 17 to the top 30 manufacturers by actual Bosnian
-# market presence (not global fame) -- see docs/RESEARCH.md §1b for sources.
+# market presence (not global fame) -- see docs/RESEARCH.md §6a for sources.
 # Real data confirmed VW alone is ~34% of the whole registered fleet, VW+Audi
 # +BMW+Mercedes+Opel together are >60% of it, and Skoda/Toyota/VW/Renault/
 # Hyundai are the current new-car top 5. Opel in particular was a glaring gap
@@ -96,9 +96,9 @@ BRAND_WATCHLIST: list[Brand] = [
     Brand("Mercedes-Benz", brand_id=56),
     Brand("Porsche", brand_id=69),
     Brand("BMW", brand_id=11),
-    # brand=64 seen in a real search-indexed olx.ba URL (§1) but not yet
-    # confirmed via a live scrape the way the 6 above are -- same caveat as
-    # any brand_id below not in CONFIRMED_BRAND_IDS.
+    # CONFIRMED 2026-07-22/23: a live run with brand=64 returned 80 real
+    # Opel listings (Mokka X, Grandland X, Insignia, etc., all genuinely
+    # Opel in the title) -- promoted out of the "unconfirmed guess" tier.
     Brand("Opel", brand_id=64),
     Brand("Volvo"),
     Brand("Land Rover"),
@@ -136,6 +136,7 @@ CONFIRMED_BRAND_IDS: dict[int, str] = {
     56: "Mercedes-Benz",
     69: "Porsche",
     11: "BMW",
+    64: "Opel",
 }
 
 # Fallback brand-name matching against listing titles, for listings whose
