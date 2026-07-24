@@ -164,7 +164,23 @@ KNOWN_BRANDS: list[str] = sorted(
 REQUEST_DELAY_SECONDS = (2.0, 4.0)  # randomized delay range between requests
 REQUEST_TIMEOUT_SECONDS = 20
 MAX_RETRIES = 3
-MAX_PAGES_PER_BRAND = 60  # hard safety cap regardless of cutoff logic
+# CONFIRMED BUG 2026-07-24: the old cap of 60 was set when the watchlist
+# was 6 brands (~19.5 min runtime) and never revisited as it grew to 30.
+# The 2026-07-23 23:45 UTC nightly run showed Volkswagen, Skoda, Audi,
+# Mercedes-Benz, BMW, and Peugeot all hitting exactly page 60 with no
+# "stopping" log line -- i.e. the cap cut them off mid-scan, not their own
+# natural 45-day-window stop condition. For most of those six the shortfall
+# was small, but Volkswagen (23.1% marked `removed` that day, vs 2-6% for
+# every other brand) and Audi (13.8%) show real active listings past page
+# 60 got falsely marked removed simply because the scan never got back
+# around to re-seeing them -- the exact same failure mode as the §6
+# brand-agnostic-sweep postmortem, recurring per-brand now that individual
+# high-volume brands are big enough to hit this cap on their own. Raised to
+# 250 -- job timeout (180 min) has ample headroom, since the log showed
+# every free-text-search brand naturally stopping well under 60 pages
+# already (worst was Ford at 37); only the highest-volume confirmed-ID
+# brands should ever approach the new cap. See docs/RESEARCH.md §6b.
+MAX_PAGES_PER_BRAND = 250
 CONSECUTIVE_EMPTY_PAGES_TO_STOP = 2
 # If this many pages in a row fail to fetch/parse, stop rather than burning
 # the whole MAX_PAGES budget on guaranteed failures (e.g. site structure

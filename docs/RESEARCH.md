@@ -446,6 +446,43 @@ C/E-Class/GLC/GLE, Porsche Macan/Cayenne/Panamera, BMW 5-Series/X3/X5. This
 is about how to *read* the resulting data later, not something the scraper
 itself needs to know — the price filter already self-selects the segment.
 
+## 6b. §6's failure mode recurring per-brand (caught and fixed 2026-07-24)
+
+The 2026-07-23 23:45 UTC nightly run (the first fully unattended one after
+the 30-manufacturer expansion) produced real data corruption -- not a
+crash, so it wasn't caught by the "did it exit 0" health check. Volkswagen
+came back with 23.1% of its tracked listings marked `removed` that day
+(vs. a 2-6% baseline for every other brand); Audi came back at 13.8%.
+
+**Root cause:** identical mechanism to §6, just scoped smaller. The job
+log showed Volkswagen, Skoda, Audi, Mercedes-Benz, BMW, and Peugeot all
+hitting exactly page 60 -- `MAX_PAGES_PER_BRAND`'s hard cap -- with no
+"stopping brand=X" log line, meaning the cap cut the scan off mid-traversal
+rather than the brand's own 45-day-window logic ending it naturally. That
+cap was set to 60 back when the watchlist was 6 brands (~19.5 min total
+runtime) and never revisited as it grew to 30 -- once individual brands
+got large enough on their own, hitting the per-brand cap became possible
+again, reopening §6's exact bug at brand-scope instead of category-scope.
+For Škoda/Mercedes/BMW/Peugeot the shortfall turned out small enough not
+to visibly corrupt their removed-rate; for Volkswagen and Audi specifically
+(the two highest-demand import brands per §6a's market research -- likely
+genuinely the deepest backlogs) it wasn't.
+
+**Fix:** `MAX_PAGES_PER_BRAND` raised 60 → 250. The same run's log showed
+every free-text-search brand stopping naturally well under 60 pages already
+(worst case Ford at 37), so only the highest-volume confirmed-brand_id
+brands should ever approach the new cap, and the 180-minute job timeout has
+ample headroom for that. `data/listings.json` and `data/raw/2026-07-23.json`
+restored from the last known-good commit (`11b42d7`, 3,999 total / 3,974
+active / 21 removed / 4 aged_out) to undo the false removals, same recovery
+approach as §6.
+
+Worth noting for next time a watchlist/subcategory-list grows (cars or any
+of the testing verticals in §10): a per-item safety cap that was sized for
+a smaller list needs re-checking as the list grows, not just the job-level
+timeout -- the job not timing out doesn't mean no individual item silently
+truncated.
+
 ## 7. Repo layout for this stage
 
 ```
