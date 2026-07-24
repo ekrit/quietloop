@@ -27,6 +27,7 @@ from datetime import date
 from urllib.parse import urlencode
 
 from . import config
+from .brand_matching import fold_brands, guess_brand_from_title, guess_model_hint
 from .categories import VERTICALS, TESTING_END_DATE, SubCategory, Vertical
 from .http_client import CircuitOpenError, PoliteSession
 from .parser import parse_search_results
@@ -63,6 +64,7 @@ def scrape_subcategory(
     removed as a result)."""
     collected: list[dict] = []
     consecutive_empty_pages = 0
+    folded_brands = fold_brands(vertical.known_brands)
 
     for page in range(1, vertical.max_pages_per_subcategory + 1):
         url = build_search_url(subcat, page, vertical.min_price_bam)
@@ -78,6 +80,12 @@ def scrape_subcategory(
             item["subcategory"] = subcat.name
             if (item.get("price_bam") or 0) < vertical.min_price_bam:
                 continue
+            # Non-car categories carry no reliable structured brand field
+            # (see brand_matching.py's module docstring) -- title-match
+            # against this vertical's known_brands list instead.
+            brand = guess_brand_from_title(item.get("title"), folded_brands)
+            item["brand"] = brand
+            item["model_hint"] = guess_model_hint(item.get("title"), brand)
             collected.append(item)
 
         if not in_window:

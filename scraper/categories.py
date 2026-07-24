@@ -22,11 +22,23 @@ sweeping their whole parent tree -- narrowed to the subcategories that
 actually carry expensive/premium items, skipping high-volume-but-cheap
 ones (t-shirts, generic toys, phone cases, etc).
 
-Price thresholds below are first-pass judgment calls, NOT user-specified
-(unlike cars' 25,000 KM, which came directly from the user). They exist so
-this testing period produces data at all; expect to tune them once real
-numbers come back, the same way the car thresholds moved 20k -> 25k KM
-after seeing real listing volume.
+**Price thresholds** (2026-07-24: raised from the original first-pass
+numbers per explicit feedback -- a 200 KM bike or 30 KM clothing item is
+not what "worth importing" means here). Still judgment calls, not derived
+from anything, same as before -- expect further tuning once more listing
+volume has accumulated at these new floors.
+
+**Brand/model extraction** (added 2026-07-24, see scraper/brand_matching.py):
+none of these categories have a reliable structured brand field -- a live
+check of the phones category's own filter-attribute schema
+(`state.search.attributes`) turned up 27 real attributes (RAM, storage,
+camera, color, etc.) but no brand/manufacturer field at all, and
+`brand_id` on individual listings is only sometimes populated. So each
+Vertical carries its own `known_brands` list, matched against listing
+titles the same way cars' `_guess_brand` always has -- see
+brand_matching.py's module docstring for the full reasoning and caveats.
+`known_brands` lists below are a reasonable-effort pass at each category's
+real, common brands in this market, not exhaustive.
 """
 from __future__ import annotations
 
@@ -50,6 +62,7 @@ class Vertical:
     slug: str  # data/<slug>/...
     min_price_bam: int
     subcategories: list[SubCategory] = field(default_factory=list)
+    known_brands: list[str] = field(default_factory=list)
     # CONFIRMED BUG 2026-07-24 (same mechanism as config.py's
     # MAX_PAGES_PER_BRAND incident, see docs/RESEARCH.md §6b): the second-
     # ever verticals run (run #4) showed 21 of 27 subcategories hitting
@@ -62,9 +75,10 @@ class Vertical:
     # fix's 60->250, since here ~21 subcategories could all need more pages
     # *simultaneously* in one job run, unlike cars where only 1-2 brands
     # were affected -- a too-generous cap risks blowing the job timeout
-    # instead of fixing the truncation). Needs re-validating against a real
-    # run same as the car fix was; may need another iteration if many
-    # subcategories still hit 120.
+    # instead of fixing the truncation). Superseded in practice by the
+    # incomplete_groups mechanism (storage.py) which makes the exact cap
+    # value a runtime/completeness tradeoff rather than a correctness one --
+    # see docs/RESEARCH.md §6b/§10.1.
     max_pages_per_subcategory: int = 120
     consecutive_empty_pages_to_stop: int = 2
 
@@ -81,22 +95,33 @@ VERTICALS: list[Vertical] = [
     Vertical(
         name="Bicycles",
         slug="bicycles",
-        min_price_bam=500,
+        min_price_bam=1500,  # was 500
         subcategories=[SubCategory("Bicikli", 22)],
+        known_brands=[
+            "Specialized", "Trek", "Giant", "Scott", "Cannondale", "Cube",
+            "Bianchi", "Cervelo", "Orbea", "Focus", "Ghost", "Merida",
+            "BMC", "KTM", "Kona", "Bulls", "Haibike", "Capriolo", "Felt",
+            "Cross", "Author", "Drag", "Ideal", "Rockrider", "Btwin",
+        ],
     ),
     Vertical(
         name="PCs & Laptops",
         slug="computers",
-        min_price_bam=1000,
+        min_price_bam=1500,  # was 1000
         subcategories=[
             SubCategory("Laptopi", 39),
             SubCategory("Desktop Racunari", 38),
+        ],
+        known_brands=[
+            "Lenovo", "Dell", "Hewlett Packard", "HP", "Asus", "Acer",
+            "Apple", "MacBook", "MSI", "Toshiba", "Fujitsu", "Gigabyte",
+            "Razer", "Alienware", "Microsoft", "Samsung", "NZXT", "Corsair",
         ],
     ),
     Vertical(
         name="Expensive Clothing",
         slug="clothing",
-        min_price_bam=150,
+        min_price_bam=400,  # was 150
         subcategories=[
             SubCategory("Tene/Patike za muskarce", 526),  # men's sneakers
             SubCategory("Tene/Patike za zene", 490),  # women's sneakers
@@ -108,11 +133,20 @@ VERTICALS: list[Vertical] = [
             SubCategory("Cipele i Gleznjace za zene", 486),  # women's shoes/ankle boots
             SubCategory("Stikle za zene", 1892),  # women's heels
         ],
+        known_brands=[
+            "Michael Kors", "Louis Vuitton", "Ralph Lauren", "Tommy Hilfiger",
+            "Calvin Klein", "Under Armour", "New Balance", "Valentino",
+            "Balenciaga", "Alexander McQueen", "Salvatore Ferragamo",
+            "Nike", "Adidas", "Puma", "Reebok", "Converse", "Vans",
+            "Gucci", "Prada", "Versace", "Armani", "Hugo Boss", "Burberry",
+            "Chanel", "Dior", "Fendi", "Zara", "Lacoste", "Guess", "ECCO",
+            "Timberland", "Clarks", "Geox", "Diesel", "Levi's", "Levis",
+        ],
     ),
     Vertical(
         name="Sports, Ski & Outdoor Equipment",
         slug="sports",
-        min_price_bam=200,
+        min_price_bam=500,  # was 200
         subcategories=[
             SubCategory("Skije", 1810),  # skis
             SubCategory("Ski pancerice", 1927),  # ski boots
@@ -124,41 +158,62 @@ VERTICALS: list[Vertical] = [
             SubCategory("Fudbalski dresovi", 1347),  # football jerseys
             SubCategory("Ostala kamp oprema", 1278),  # hiking/camping gear -- closest real subcategory to "hiking gear"
         ],
+        known_brands=[
+            "Salomon", "Atomic", "Head", "Rossignol", "Fischer", "Nordica",
+            "Dynastar", "Elan", "Volkl", "The North Face", "Columbia",
+            "Patagonia", "Arc'teryx", "Jack Wolfskin", "Quechua", "Decathlon",
+            "Nike", "Adidas", "Puma", "Under Armour", "Wilson", "SportsArt",
+            "Gym80", "Pure Kraft",
+        ],
     ),
     Vertical(
         name="Mobile Phones",
         slug="phones",
-        min_price_bam=500,
+        min_price_bam=800,  # was 500
         subcategories=[SubCategory("Mobiteli", 31)],
+        known_brands=[
+            "Samsung", "Apple", "iPhone", "Xiaomi", "Huawei", "Honor",
+            "OnePlus", "Oppo", "Vivo", "Nokia", "Sony", "LG", "Motorola",
+            "Google Pixel", "Realme", "ZTE", "Alcatel",
+        ],
     ),
     Vertical(
         name="Watches",
         slug="watches",
-        min_price_bam=300,
+        min_price_bam=600,  # was 300
         subcategories=[SubCategory("Rucni Satovi", 244)],
+        known_brands=[
+            "Rolex", "Omega", "Audemars Piguet", "Patek Philippe", "Cartier",
+            "Tag Heuer", "Longines", "Hublot", "Breitling", "Casio", "Seiko",
+            "Citizen", "Tissot", "IWC", "Swatch", "Fossil", "Timex",
+        ],
     ),
     Vertical(
         name="Gaming Consoles",
         slug="consoles",
-        min_price_bam=300,
+        min_price_bam=400,  # was 300
         subcategories=[SubCategory("Konzole", 292)],
+        known_brands=["Sony", "PlayStation", "Microsoft", "Xbox", "Nintendo", "Sega", "Atari"],
     ),
     Vertical(
         name="Tablets",
         slug="tablets",
-        min_price_bam=400,
+        min_price_bam=600,  # was 400
         subcategories=[SubCategory("Tablet PCs", 1495)],
+        known_brands=["Apple", "iPad", "Samsung", "Huawei", "Lenovo", "Xiaomi", "Microsoft Surface", "Amazon Fire", "Asus"],
     ),
     Vertical(
         name="Smartwatches",
         slug="smartwatches",
-        min_price_bam=300,
+        min_price_bam=400,  # was 300
         subcategories=[SubCategory("Smartwatch", 2076)],
+        known_brands=["Apple", "Samsung", "Garmin", "Huawei", "Xiaomi", "Fitbit", "Amazfit", "Sigma", "Fossil", "Polar", "Suunto"],
     ),
     Vertical(
         name="Digital Cameras",
         slug="cameras",
-        min_price_bam=300,
+        min_price_bam=600,  # was 300
         subcategories=[SubCategory("Digitalni fotoaparati", 112)],
+        known_brands=["Canon", "Nikon", "Sony", "Fujifilm", "Panasonic", "Olympus", "Leica", "Pentax", "GoPro", "DJI", "Kodak"],
     ),
 ]
