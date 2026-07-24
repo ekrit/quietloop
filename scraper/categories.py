@@ -50,7 +50,22 @@ class Vertical:
     slug: str  # data/<slug>/...
     min_price_bam: int
     subcategories: list[SubCategory] = field(default_factory=list)
-    max_pages_per_subcategory: int = 40
+    # CONFIRMED BUG 2026-07-24 (same mechanism as config.py's
+    # MAX_PAGES_PER_BRAND incident, see docs/RESEARCH.md §6b): the second-
+    # ever verticals run (run #4) showed 21 of 27 subcategories hitting
+    # exactly page 40 -- this cap -- with no "stopping" log line, i.e.
+    # truncated mid-scan rather than reaching their own 45-day-window stop.
+    # "Kopacke" (football boots) went from 179 tracked to 179 REMOVED (100%)
+    # as a result -- every previously-seen listing shifted past page 40
+    # between the two scrapes and got wrongly marked gone. Raised 40 -> 120
+    # as a first, moderate increase (not as large a multiple as the car
+    # fix's 60->250, since here ~21 subcategories could all need more pages
+    # *simultaneously* in one job run, unlike cars where only 1-2 brands
+    # were affected -- a too-generous cap risks blowing the job timeout
+    # instead of fixing the truncation). Needs re-validating against a real
+    # run same as the car fix was; may need another iteration if many
+    # subcategories still hit 120.
+    max_pages_per_subcategory: int = 120
     consecutive_empty_pages_to_stop: int = 2
 
     @property

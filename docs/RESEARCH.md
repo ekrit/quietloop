@@ -698,6 +698,47 @@ search-results payload alone (search results don't carry a post-removal
 status) — `removed` is the closest available signal, same limitation as
 cars.
 
+### 10.1 §6b's bug recurring in the verticals pipeline too (caught 2026-07-24)
+
+The daily monitoring routine's second day caught the same
+`MAX_PAGES_PER_BRAND`-style truncation bug (§6b) independently in
+`scraper/categories.py`'s per-subcategory equivalent. The verticals
+pipeline's *second-ever* scrape (run #4, 2026-07-23 23:57 UTC, the one
+that added phones/watches/consoles/tablets/smartwatches/cameras) showed
+**21 of 27 subcategories hitting exactly page 40** (`max_pages_per_
+subcategory`'s old default) with no natural "stopping" log line — i.e.
+truncated mid-scan rather than reaching their own window-based stop.
+
+Impact was uneven: "Kopacke" (football boots) went from 179 tracked to
+**179 marked `removed` — 100%** (every single previously-seen listing
+shifted past page 40 between the two scrapes and got wrongly marked
+gone). Bicycles (3.3%), computers (2.8%), and clothing (1.2%) stayed
+close enough to a plausible baseline that they weren't obviously wrong on
+inspection, but given their subcategories hit the same cap, they were
+restored too rather than assumed clean. The six brand-new verticals from
+that same run (phones, watches, consoles, tablets, smartwatches, cameras)
+were **unaffected** — a first-ever scrape has nothing to falsely compare
+against, so no removals were possible for them yet.
+
+**Fix:** `max_pages_per_subcategory` default raised 40 → 120 (a smaller
+multiple than §6b's car fix, deliberately -- with ~21 subcategories
+potentially all needing more page budget *simultaneously* in one job run,
+unlike cars where only 1-2 brands were affected, a too-generous cap risks
+blowing the job timeout instead of fixing the truncation). Workflow
+timeout bumped 120→220 minutes to match. All four affected verticals'
+`data/<slug>/listings.json` restored to their first-scrape baseline
+(commit `f7d76f0`, 100% active, zero removed — the only truly "clean"
+state, since even the *second* scrape under the old code already showed
+this corruption, not just the later expansion run). `data/import_
+worthiness_report.json` regenerated locally to strip the resulting fake
+scores (Kopacke's 100% sell-through in particular) rather than wait for
+the next scheduled regeneration.
+
+This is less certain to be fully resolved than §6b's car fix — worth a
+close look at the next real run's logs to see whether subcategories now
+show natural stops or still hit 120, and whether 220 minutes is enough
+headroom if several do.
+
 ## 11. Import-worthiness scoring (`scraper/analysis.py`)
 
 The end goal stated for this project is a website/browser extension that

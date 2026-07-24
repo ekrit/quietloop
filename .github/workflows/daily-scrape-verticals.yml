@@ -27,7 +27,11 @@ concurrency:
 jobs:
   scrape:
     runs-on: ubuntu-latest
-    timeout-minutes: 120
+    # Bumped 120->220 alongside the max_pages_per_subcategory 40->120 fix
+    # (see categories.py) -- 21 of 27 subcategories hit the old 40-page cap
+    # simultaneously in one run, so raising it could plausibly push total
+    # runtime well past the old 120-min budget in the worst case.
+    timeout-minutes: 220
     steps:
       - name: Check out repo
         uses: actions/checkout@v4
