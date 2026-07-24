@@ -110,6 +110,13 @@ def main() -> None:
         data = parsed.get("data")
         if isinstance(data, list) and data:
             print(f"data: len={len(data)}, item_keys={list(data[0].keys())}")
+            dates = [item.get("date") for item in data if isinstance(item.get("date"), (int, float))]
+            if dates:
+                import datetime as _dt
+                newest = _dt.datetime.fromtimestamp(max(dates), tz=_dt.timezone.utc)
+                oldest = _dt.datetime.fromtimestamp(min(dates), tz=_dt.timezone.utc)
+                print(f"date range on this page: oldest={oldest.date()} newest={newest.date()} (monotonic_nonincreasing={dates == sorted(dates, reverse=True)})")
+                print(f"all dates (unix): {dates}")
             print("--- sample item (data[0]) ---")
             print(json.dumps(data[0], ensure_ascii=False, indent=2))
             if len(data) > 1:
