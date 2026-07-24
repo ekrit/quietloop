@@ -46,19 +46,20 @@ that with *how well*. These weights are a first-pass judgment call, not
 derived from anything -- expect to revisit them once there's enough
 history to check whether they actually predict anything.
 
-## Grouping granularity -- an honest gap
+## Grouping granularity
 
-Cars are grouped by `brand`, which is a solid signal -- run.py tags it
-authoritatively from which brand-specific search found the listing.
-Every other vertical is grouped only by `subcategory` (e.g. "Rucni
-Satovi", "Tene/Patike za zene") because there's no brand/model extraction
-built for non-car listings yet -- so "watches" is one bucket covering
-everything from Casio to Rolex, which is a much coarser signal than
-cars' per-brand breakdown. Worth building real brand/model parsing per
-vertical (title text matching, similar to parser.py's car `_guess_brand`)
-before trusting cross-brand comparisons *within* a non-car vertical -- for
-now this only supports comparing across subcategories/verticals, not
-brands within one.
+Cars are grouped by `brand`, tagged authoritatively from which
+brand-specific search found the listing (run.py). Verticals are grouped
+two ways now (added 2026-07-24, see scraper/brand_matching.py):
+`by_subcategory` (e.g. "Rucni Satovi", "Tene/Patike za zene" -- the `type`
+dimension) and `by_brand` (title-text matched against each Vertical's
+`known_brands` list, same technique as cars' `_guess_brand`, generalized
+in brand_matching.py). Brand-level groups are a heuristic, not an
+authoritative tag like cars' -- a listing whose title doesn't mention any
+known brand name falls into an `Unknown` bucket rather than being
+dropped, so `Unknown`'s own stats are meaningless as a "brand" and should
+be read as "coverage gap in known_brands", not as a real competitor
+group.
 
 ## Minimum sample size
 
@@ -201,6 +202,7 @@ def analyze_cars() -> list[GroupStats]:
 
 
 def analyze_vertical(slug: str) -> list[GroupStats]:
+    """Groups by `subcategory` (the "type" dimension, e.g. "Rucni Satovi")."""
     state_path = config.DATA_DIR / slug / "listings.json"
     state = _load_json(state_path)
     by_subcat: dict[str, list[dict]] = {}
@@ -212,15 +214,34 @@ def analyze_vertical(slug: str) -> list[GroupStats]:
     return sorted(groups, key=lambda g: (g.score is None, -(g.score or 0)))
 
 
+def analyze_vertical_by_brand(slug: str) -> list[GroupStats]:
+    """Groups by `brand` (title-matched against the Vertical's known_brands,
+    see brand_matching.py) -- listings with no matched brand fall into
+    "Unknown" rather than being dropped; see module docstring's caveat
+    about reading that bucket as a coverage gap, not a real group."""
+    state_path = config.DATA_DIR / slug / "listings.json"
+    state = _load_json(state_path)
+    by_brand: dict[str, list[dict]] = {}
+    for listing in state.values():
+        brand = listing.get("brand") or "Unknown"
+        by_brand.setdefault(brand, []).append(listing)
+    groups = [compute_group_stats(brand, items) for brand, items in by_brand.items()]
+    score_groups(groups)
+    return sorted(groups, key=lambda g: (g.score is None, -(g.score or 0)))
+
+
 def generate_report() -> dict:
     report: dict = {"cars": [asdict(g) for g in analyze_cars()], "verticals": {}}
 
     vertical_summaries = []
     for vertical in VERTICALS:
         groups = analyze_vertical(vertical.slug)
+        brand_groups = analyze_vertical_by_brand(vertical.slug)
         report["verticals"][vertical.slug] = {
             "name": vertical.name,
             "groups": [asdict(g) for g in groups],
+            "by_subcategory": [asdict(g) for g in groups],
+            "by_brand": [asdict(g) for g in brand_groups],
         }
         scored = [g.score for g in groups if g.score is not None]
         if scored:
@@ -237,10 +258,12 @@ def generate_report() -> dict:
     report["methodology_note"] = (
         "Scores rank domestic sell-through/speed/price-firmness -- a demand proxy, "
         "NOT a profit-margin calculation (no cross-border source-market price data "
-        "exists in this pipeline). Cars are grouped by brand; every other vertical "
-        "is grouped only by subcategory (no brand/model extraction built yet for "
-        "non-car listings), so within-vertical brand comparisons aren't possible "
-        "outside of cars. See scraper/analysis.py's module docstring for full detail."
+        "exists in this pipeline). Cars are grouped by brand (authoritative, from "
+        "per-brand search). Verticals are grouped both ways: by_subcategory (the "
+        "'type' dimension) and by_brand (title-matched against each vertical's "
+        "known_brands list, heuristic -- unmatched listings fall into an 'Unknown' "
+        "bucket that should be read as a known_brands coverage gap, not a real "
+        "brand). See scraper/analysis.py's module docstring for full detail."
     )
     return report
 

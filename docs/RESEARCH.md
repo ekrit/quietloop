@@ -803,15 +803,12 @@ Each is min-max normalized *within the comparison set* (so, e.g., "fast"
 for cars and "fast" for phones are graded on their own scales) into a
 single 0-100 `score` per group.
 
-**Grouping granularity is uneven, and that's an honest gap, not a design
-choice:** cars are grouped by `brand` (authoritative — tagged by which
-brand-specific search found the listing). Every other vertical is grouped
-only by `subcategory` (e.g. "Rucni Satovi") because there's no brand/model
-text-extraction built for non-car listings yet — the same kind of
-title-matching `parser.py` already does for cars (`_guess_brand`) would
-need to be built per vertical before, say, "which watch brand sells
-fastest" becomes answerable the way "which car brand sells fastest"
-already is.
+**Grouping granularity:** cars are grouped by `brand` (authoritative —
+tagged by which brand-specific search found the listing). Verticals are
+now grouped both ways (see §12): `by_subcategory` (the "type" dimension)
+and `by_brand` (title-matched, heuristic — see §12 for caveats). The
+`groups` key is kept as an alias for `by_subcategory` for backwards
+compatibility.
 
 **Minimum sample size:** a group needs `n >= 10` total listings and
 `removed + aged_out >= 5` before it gets a score at all — below that it's
@@ -831,3 +828,67 @@ a glance. Regenerated daily by `.github/workflows/daily-analysis-report.yml`
 (cron `0 3 * * *`, comfortably after both scrape workflows even at their
 worst-case runtime), same stale-checkout-sync + retry-push pattern as the
 other two workflows.
+
+## 12. Price floors raised + brand/model extraction for verticals (2026-07-24)
+
+Two pieces of explicit user feedback drove this: (1) the original
+first-pass `min_price_bam` values were too low to represent "worth
+importing" (their words: not interested in a 200 KM bike or 30 KM
+clothing item), and (2) brand/type/model needed to actually be extracted
+for the non-car verticals, not just subcategory — the exact gap flagged
+in §11 and analysis.py's own docstring.
+
+**Price floors** (`scraper/categories.py`), old → new:
+bicycles 500→1500, PCs & Laptops 1000→1500, Expensive Clothing 150→400,
+Sports/Ski/Outdoor 200→500, Mobile Phones 500→800, Watches 300→600,
+Gaming Consoles 300→400, Tablets 400→600, Smartwatches 300→400, Digital
+Cameras 300→600. Same caveat as before: judgment calls, not derived from
+anything, expect further tuning once more volume has accumulated at these
+new floors.
+
+**Brand/model extraction** (`scraper/brand_matching.py`): before building
+this, checked whether olx.ba exposes a structured brand field to lean on
+instead of guessing — a live "Debug fetch" against the phones category
+(`state.search.attributes`, the category's own filter-attribute schema)
+turned up 27 real attributes (RAM, storage, camera, color, screen size,
+battery, etc.) but **no brand/manufacturer attribute at all**, and
+`brand_id` on individual listings is only sometimes populated. So there's
+no shortcut — brand has to come from matching a known-brand list against
+the listing title, the same technique `parser.py`'s `_guess_brand` has
+used for cars from day one. That logic was pulled out into a shared
+module (`brand_matching.py`: `strip_diacritics`, `fold_brands` — sorts
+longest-name-first so e.g. "Land Rover" matches before the shorter,
+ambiguous "Rover" — `guess_brand_from_title`, `guess_model_hint`) so cars
+and verticals both use one implementation. `parser.py` was refactored to
+call into it (behavior-preserving — full test suite re-passed
+immediately after).
+
+Each `Vertical` (`categories.py`) now carries a `known_brands` list (a
+reasonable-effort pass at each category's real, common brands in this
+market, not exhaustive — e.g. bicycles: Specialized/Trek/Giant/Cube/...,
+watches: Rolex/Omega/Casio/Seiko/..., phones: Samsung/Apple/Xiaomi/...).
+`multi_run.py`'s `scrape_subcategory()` now tags every collected item
+with `brand` (matched brand name or `None`) and `model_hint` (the text
+immediately following the matched brand name in the title, trimmed to 4
+words / 40 chars — explicitly a "hint", not a validated model field,
+since there's no structured model field anywhere in the payload for any
+category).
+
+**Honest caveats, same as cars' brand matching has always had:** a title
+with no known brand name returns `None` rather than a wrong guess (these
+fall into an "Unknown" bucket in `analyze_vertical_by_brand`, which
+should be read as a `known_brands` coverage gap, not as a real brand
+group); a title mentioning two brand names resolves to whichever is
+longest, which is usually but not always correct; `model_hint` is raw
+trailing title text and will contain noise (specs, condition words,
+seller comments) mixed in with the real model name.
+
+`scraper/analysis.py` gained `analyze_vertical_by_brand()` alongside the
+existing subcategory-based `analyze_vertical()`; `generate_report()` now
+writes both under each vertical (`by_subcategory` / `by_brand`, with
+`groups` kept as an alias for `by_subcategory`). Tests added:
+`tests/test_brand_matching.py` (11 cases covering diacritics folding,
+longest-first matching, no-match/None handling, model-hint trimming and
+truncation) and a new case in `tests/test_multi_run.py` confirming
+`run_vertical` actually tags scraped items with `brand`/`model_hint`.
+Full suite: 46 passed.
