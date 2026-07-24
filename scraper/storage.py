@@ -55,10 +55,23 @@ def merge_into_state(
     scraped: list[dict],
     run_date: date,
     max_listing_age_days: int = MAX_LISTING_AGE_DAYS,
+    incomplete_groups: frozenset[str] = frozenset(),
 ) -> dict:
     """Apply one day's scraped listings onto the state table (mutated and
     returned). See module docstring and docs/RESEARCH.md §2/§5 for the
     removed vs. aged_out distinction.
+
+    `incomplete_groups`: brand/subcategory names (checked against a
+    record's `brand` or `subcategory` field, whichever it has) whose scan
+    hit its page cap without reaching a natural stop this run -- see
+    docs/RESEARCH.md §6b/§10.1. A group's records still get new listings
+    added and last_seen/price updated for whatever WAS re-seen, but are
+    exempted from the removed/aged_out determination below, since "not
+    seen" isn't a trustworthy signal when the scan is known to be
+    incomplete. Confirmed via real data that just raising the page cap
+    doesn't reliably fix this for the highest-volume groups (bumping cars'
+    cap 60->250 still hit the new cap for the same 6 brands and made the
+    false-removal rate *worse*, not better) -- this is the actual fix.
     """
     seen_ids = set()
 
@@ -103,6 +116,8 @@ def merge_into_state(
     for record in state.values():
         if record.get("status") != "active":
             continue
+        if (record.get("brand") in incomplete_groups) or (record.get("subcategory") in incomplete_groups):
+            continue  # today's scan didn't fully cover this group -- don't guess
 
         published = record.get("published_date")
         listing_id = record["id"]

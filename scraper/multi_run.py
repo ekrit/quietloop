@@ -54,7 +54,13 @@ def within_window(published_date: str | None, run_date: date) -> bool:
 
 def scrape_subcategory(
     session: PoliteSession, subcat: SubCategory, vertical: Vertical, run_date: date
-) -> list[dict]:
+) -> tuple[list[dict], bool]:
+    """Returns (collected, hit_page_cap) -- see run.py's scrape_brand for
+    why: a subcategory whose scan didn't reach a natural stop shouldn't
+    have its unseen listings marked removed/aged_out (docs/RESEARCH.md
+    §10.1 -- confirmed via real data that 21/27 subcategories hit the old
+    40-page cap, and "Kopacke" went from 179 tracked to 179 falsely
+    removed as a result)."""
     collected: list[dict] = []
     consecutive_empty_pages = 0
 
@@ -65,7 +71,7 @@ def scrape_subcategory(
         page_listings = parse_search_results(response.text)
 
         if not page_listings:
-            break
+            return collected, False
 
         in_window = [item for item in page_listings if within_window(item.get("published_date"), run_date)]
         for item in in_window:
@@ -85,11 +91,19 @@ def scrape_subcategory(
                     consecutive_empty_pages,
                     config.MAX_LISTING_AGE_DAYS,
                 )
-                break
+                return collected, False
         else:
             consecutive_empty_pages = 0
 
-    return collected
+    logger.warning(
+        "vertical=%s subcat=%s hit max_pages_per_subcategory=%d without a natural "
+        "stop -- today's scan is incomplete for this subcategory, skipping "
+        "removed/aged_out determination for it this run (see docs/RESEARCH.md §10.1)",
+        vertical.slug,
+        subcat.name,
+        vertical.max_pages_per_subcategory,
+    )
+    return collected, True
 
 
 def run_vertical(session: PoliteSession, vertical: Vertical, run_date: date) -> tuple[dict, bool]:
@@ -97,11 +111,15 @@ def run_vertical(session: PoliteSession, vertical: Vertical, run_date: date) -> 
     all_listings: dict[str, dict] = {}
     subcats_failed = 0
     circuit_opened = False
+    incomplete_subcats: set[str] = set()
 
     try:
         for subcat in vertical.subcategories:
             try:
-                for item in scrape_subcategory(session, subcat, vertical, run_date):
+                items, hit_cap = scrape_subcategory(session, subcat, vertical, run_date)
+                if hit_cap:
+                    incomplete_subcats.add(subcat.name)
+                for item in items:
                     all_listings.setdefault(item["id"], item)
             except CircuitOpenError:
                 circuit_opened = True
@@ -118,16 +136,18 @@ def run_vertical(session: PoliteSession, vertical: Vertical, run_date: date) -> 
 
     scraped = list(all_listings.values())
     save_raw_snapshot(run_date, scraped, vertical.raw_dir)
-    state = merge_into_state(state, scraped, run_date)
+    state = merge_into_state(state, scraped, run_date, incomplete_groups=frozenset(incomplete_subcats))
     save_state(state, vertical.state_path)
 
     healthy = not circuit_opened and subcats_failed < len(vertical.subcategories)
     logger.info(
-        "vertical=%s complete: %d listings scraped today, %d total tracked, healthy=%s",
+        "vertical=%s complete: %d listings scraped today, %d total tracked, "
+        "healthy=%s, incomplete_subcats=%s",
         vertical.slug,
         len(scraped),
         len(state),
         healthy,
+        sorted(incomplete_subcats) or None,
     )
     return state, healthy
 

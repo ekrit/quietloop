@@ -18,6 +18,17 @@ site. Per-brand text search apparently narrows things down enough that
 exhaustive 45-day coverage actually works (proven separately) — so this is
 back to per-brand querying, just covering more brands than originally.
 
+The same problem recurred at brand-scope once the watchlist grew large
+enough (docs/RESEARCH.md §6b): Volkswagen, Skoda, Audi, Mercedes-Benz, BMW,
+and Peugeot all hit `MAX_PAGES_PER_BRAND` without a natural stop. Raising
+the cap 60→250 didn't fix it — the same 6 brands hit the new cap too, and
+the false-removal rate got *worse*. Rather than keep guessing at a bigger
+number, `scrape_brand` now reports whether it actually reached a natural
+stop; `run()` tracks which brands didn't and tells `merge_into_state` to
+skip removed/aged_out determination for them that day (`incomplete_
+groups`) — a brand's unseen listings just stay untouched until a day the
+scan does complete, rather than getting guessed at.
+
 Listing data (price, year, mileage, fuel type, etc.) comes from the search
 page's embedded Nuxt SSR state payload (see parser.py, nuxt_payload.py) —
 verified against the real live site via the "Debug fetch" workflow, not
@@ -65,7 +76,15 @@ def within_window(published_date: str | None, run_date: date) -> bool:
     return age <= config.MAX_LISTING_AGE_DAYS
 
 
-def scrape_brand(session: PoliteSession, brand: config.Brand, run_date: date) -> list[dict]:
+def scrape_brand(session: PoliteSession, brand: config.Brand, run_date: date) -> tuple[list[dict], bool]:
+    """Returns (collected, hit_page_cap). hit_page_cap is True if the loop
+    ran out of MAX_PAGES_PER_BRAND without reaching a natural stop -- see
+    storage.merge_into_state's incomplete_groups: a brand whose scan didn't
+    finish shouldn't have its unseen listings marked removed/aged_out,
+    since "not seen" isn't trustworthy when the scan itself is known to be
+    incomplete (confirmed via real data 2026-07-24, docs/RESEARCH.md §6b --
+    raising the cap alone doesn't reliably fix this for the highest-volume
+    brands)."""
     collected: list[dict] = []
     consecutive_empty_pages = 0
 
@@ -76,7 +95,7 @@ def scrape_brand(session: PoliteSession, brand: config.Brand, run_date: date) ->
         page_listings = parse_search_results(response.text)
 
         if not page_listings:
-            break  # no more results at all
+            return collected, False  # no more results at all -- naturally done
 
         in_window = [item for item in page_listings if within_window(item.get("published_date"), run_date)]
         for item in in_window:
@@ -101,11 +120,18 @@ def scrape_brand(session: PoliteSession, brand: config.Brand, run_date: date) ->
                     consecutive_empty_pages,
                     config.MAX_LISTING_AGE_DAYS,
                 )
-                break
+                return collected, False  # naturally done
         else:
             consecutive_empty_pages = 0
 
-    return collected
+    logger.warning(
+        "brand=%s hit MAX_PAGES_PER_BRAND=%d without a natural stop -- "
+        "today's scan is incomplete for this brand, skipping removed/aged_out "
+        "determination for it this run (see docs/RESEARCH.md §6b)",
+        brand.name,
+        config.MAX_PAGES_PER_BRAND,
+    )
+    return collected, True
 
 
 def run(run_date: date | None = None) -> tuple[dict, bool]:
@@ -123,10 +149,14 @@ def run(run_date: date | None = None) -> tuple[dict, bool]:
     all_listings: dict[str, dict] = {}
     brands_failed = 0
     circuit_opened = False
+    incomplete_brands: set[str] = set()
     try:
         for brand in config.BRAND_WATCHLIST:
             try:
-                for item in scrape_brand(session, brand, run_date):
+                items, hit_cap = scrape_brand(session, brand, run_date)
+                if hit_cap:
+                    incomplete_brands.add(brand.name)
+                for item in items:
                     all_listings.setdefault(item["id"], item)  # de-dupe across brand queries
             except CircuitOpenError:
                 circuit_opened = True
@@ -142,15 +172,17 @@ def run(run_date: date | None = None) -> tuple[dict, bool]:
 
     scraped = list(all_listings.values())
     save_raw_snapshot(run_date, scraped)
-    state = merge_into_state(state, scraped, run_date)
+    state = merge_into_state(state, scraped, run_date, incomplete_groups=frozenset(incomplete_brands))
     save_state(state)
 
     healthy = not circuit_opened and brands_failed < len(config.BRAND_WATCHLIST)
     logger.info(
-        "run complete: %d listings scraped today, %d total tracked in state, healthy=%s",
+        "run complete: %d listings scraped today, %d total tracked in state, "
+        "healthy=%s, incomplete_brands=%s",
         len(scraped),
         len(state),
         healthy,
+        sorted(incomplete_brands) or None,
     )
     return state, healthy
 

@@ -468,20 +468,47 @@ to visibly corrupt their removed-rate; for Volkswagen and Audi specifically
 (the two highest-demand import brands per §6a's market research -- likely
 genuinely the deepest backlogs) it wasn't.
 
-**Fix:** `MAX_PAGES_PER_BRAND` raised 60 → 250. The same run's log showed
-every free-text-search brand stopping naturally well under 60 pages already
-(worst case Ford at 37), so only the highest-volume confirmed-brand_id
-brands should ever approach the new cap, and the 180-minute job timeout has
-ample headroom for that. `data/listings.json` and `data/raw/2026-07-23.json`
-restored from the last known-good commit (`11b42d7`, 3,999 total / 3,974
-active / 21 removed / 4 aged_out) to undo the false removals, same recovery
-approach as §6.
+**First attempted fix (didn't work):** `MAX_PAGES_PER_BRAND` raised 60 →
+250, reasoning that free-text-search brands were all stopping naturally
+well under 60 pages already (worst case Ford at 37) so only the
+highest-volume confirmed-brand_id brands should need the headroom.
+`data/listings.json` restored from `11b42d7` to undo the false removals.
+**Validated against a real run and it was wrong** -- the same six brands
+(Volkswagen, Skoda, Audi, Mercedes-Benz, BMW, Peugeot) hit the *new* 250
+cap too, still with no natural stop, and the false-removal rate got
+*worse* (Volkswagen 25.5%, Audi 19.6%, both up from the original incident).
+Raising a constant doesn't fix a problem whose real cause is "this
+brand's true backlog is bigger than any budget we're willing to page
+through daily" -- this is the same structural issue as the original §6
+sweep, just recurring at brand-scope for these six specifically.
+
+**Actual fix:** stop trying to guess a large-enough page cap and instead
+make the removal/aged_out determination *aware* of whether that day's scan
+actually finished. `scrape_brand()` now returns whether it reached a
+natural stop or exhausted `MAX_PAGES_PER_BRAND` without one; `run()`
+collects the brands that didn't finish into `incomplete_brands` and passes
+it to `merge_into_state(..., incomplete_groups=...)`, which skips the
+removed/aged_out check entirely for any record belonging to an incomplete
+group -- new listings still get added and re-seen listings still get their
+price/last-seen updated, but "not seen this run" simply isn't trusted as a
+removal signal for a brand whose scan is known-incomplete. Practical
+effect: Volkswagen/Audi (and whichever other brands hit the cap on a given
+day) stop accumulating false removals, at the cost of their removed/
+aged_out detection lagging until a day the scan does complete (which may
+be never, for a backlog that consistently exceeds the cap -- an honest
+limitation, not a hidden one). `data/listings.json` restored to `11b42d7`
+again. Applied to the verticals pipeline too (§10.1) since the identical
+bug was found there independently the same day.
 
 Worth noting for next time a watchlist/subcategory-list grows (cars or any
 of the testing verticals in §10): a per-item safety cap that was sized for
 a smaller list needs re-checking as the list grows, not just the job-level
 timeout -- the job not timing out doesn't mean no individual item silently
-truncated.
+truncated. And per this incident specifically: if raising the cap once
+doesn't fix it, don't raise it again and hope -- that's a sign the real
+backlog exceeds any reasonable daily budget, and the fix is to stop
+guessing at removal for under-scanned groups, not to keep guessing at a
+bigger number.
 
 ## 7. Repo layout for this stage
 
@@ -734,10 +761,17 @@ worthiness_report.json` regenerated locally to strip the resulting fake
 scores (Kopacke's 100% sell-through in particular) rather than wait for
 the next scheduled regeneration.
 
-This is less certain to be fully resolved than §6b's car fix — worth a
-close look at the next real run's logs to see whether subcategories now
-show natural stops or still hit 120, and whether 220 minutes is enough
-headroom if several do.
+**Update:** this concern turned out justified. The car pipeline's own
+250-page cap increase (§6b) was validated against a real run before this
+vertical fix could be, and it failed the same way -- the same six brands
+hit the new cap too, false-removal rate got *worse*, not better. Rather
+than wait to find out the 40→120 cap bump here fails the same way,
+applied the same real fix proactively: `scrape_subcategory()` now reports
+whether it reached a natural stop, and `run_vertical()` passes the
+subcategories that didn't into `merge_into_state`'s `incomplete_groups`,
+which skips removed/aged_out determination for them rather than guessing.
+See §6b for the full reasoning on why raising a cap doesn't fix a backlog
+that's genuinely bigger than any daily page budget.
 
 ## 11. Import-worthiness scoring (`scraper/analysis.py`)
 

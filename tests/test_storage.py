@@ -78,3 +78,51 @@ def test_aged_out_days_listed_is_frozen():
     state = merge_into_state(state, [], date(2026, 8, 1))
 
     assert state["a1"]["days_listed"] == days_at_ageout
+
+
+def test_incomplete_group_skips_removal_for_its_brand():
+    # simulates a brand whose scan hit its page cap without a natural stop
+    # (docs/RESEARCH.md §6b/§10.1) -- listing should stay active rather
+    # than being falsely marked removed just because it wasn't re-seen.
+    state = merge_into_state({}, [_listing("a1", 24500, "2026-07-20")], date(2026, 7, 22))
+    state = merge_into_state(state, [], date(2026, 7, 25), incomplete_groups=frozenset({"Volkswagen"}))
+
+    assert state["a1"]["status"] == "active"
+    assert "removed_date" not in state["a1"]
+
+
+def test_incomplete_group_does_not_affect_other_brands():
+    state = merge_into_state(
+        {},
+        [_listing("a1", 24500, "2026-07-20"), _listing("b1", 30000, "2026-07-20")],
+        date(2026, 7, 22),
+    )
+    state["b1"]["brand"] = "Audi"
+    state = merge_into_state(state, [], date(2026, 7, 25), incomplete_groups=frozenset({"Volkswagen"}))
+
+    assert state["a1"]["status"] == "active"  # protected -- Volkswagen incomplete
+    assert state["b1"]["status"] == "removed"  # Audi's scan was complete, so this is real
+
+
+def test_incomplete_group_still_updates_listings_that_were_seen():
+    state = merge_into_state({}, [_listing("a1", 24500, "2026-07-20")], date(2026, 7, 22))
+    state = merge_into_state(
+        state, [_listing("a1", 23000, "2026-07-20")], date(2026, 7, 25), incomplete_groups=frozenset({"Volkswagen"})
+    )
+
+    # re-seen listings still get their price/last_seen updated even though
+    # the brand is flagged incomplete -- the exemption only applies to the
+    # "wasn't seen at all" removal/aged_out determination
+    assert state["a1"]["status"] == "active"
+    assert state["a1"]["last_seen_date"] == "2026-07-25"
+    assert state["a1"]["price_history"][-1]["price_bam"] == 23000
+
+
+def test_incomplete_group_checked_against_subcategory_field_too():
+    listing = _listing("a1", 900, "2026-07-20")
+    del listing["brand"]
+    listing["subcategory"] = "Kopacke"
+    state = merge_into_state({}, [listing], date(2026, 7, 22))
+    state = merge_into_state(state, [], date(2026, 7, 25), incomplete_groups=frozenset({"Kopacke"}))
+
+    assert state["a1"]["status"] == "active"
