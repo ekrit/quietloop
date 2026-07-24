@@ -61,6 +61,18 @@ def report_nuxt_state(html: str) -> None:
             for sub in cat.get("sub_categories") or []:
                 print(f"    sub id={sub.get('id')} name={sub.get('name')!r} count={sub.get('count')}")
 
+    attributes = search.get("attributes")
+    if isinstance(attributes, list):
+        print("--- state.search.attributes (category's own filter-attribute schema) ---")
+        for attr in attributes:
+            name = attr.get("name")
+            display_name = attr.get("display_name")
+            options = attr.get("options")
+            print(f"  id={attr.get('id')} name={name!r} display_name={display_name!r} input_type={attr.get('input_type')}")
+            if isinstance(options, list) and options:
+                preview = options[:15]
+                print(f"    options ({len(options)} total): {preview}")
+
     out_path = Path("/tmp/nuxt_payload.json")
     out_path.write_text(json.dumps(data, ensure_ascii=False, indent=2)[:200000])
     print(f"wrote (possibly truncated) payload to {out_path}")
