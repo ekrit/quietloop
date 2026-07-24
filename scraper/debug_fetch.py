@@ -104,9 +104,9 @@ def main() -> None:
     print("--- parsed as bare JSON (not a __NUXT__ HTML page) ---")
     if isinstance(parsed, dict):
         print(f"top_level_keys={list(parsed.keys())}")
-        for key in ("meta", "links", "pagination", "total", "per_page", "current_page", "last_page"):
+        for key in ("meta", "links", "pagination", "total", "per_page", "current_page", "last_page", "filters", "aggregations"):
             if key in parsed:
-                print(f"  {key}={json.dumps(parsed[key], ensure_ascii=False)}")
+                print(f"  {key}={json.dumps(parsed[key], ensure_ascii=False)[:4000]}")
         data = parsed.get("data")
         if isinstance(data, list) and data:
             print(f"data: len={len(data)}, item_keys={list(data[0].keys())}")
