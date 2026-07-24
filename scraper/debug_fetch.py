@@ -94,6 +94,9 @@ def main() -> None:
     print("--- NUXT payload ---")
     report_nuxt_state(text)
 
+    print("--- raw response body (first 3000 chars, for non-HTML/API responses) ---")
+    print(text[:3000])
+
 
 if __name__ == "__main__":
     main()
