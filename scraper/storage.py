@@ -16,7 +16,7 @@ from datetime import date, datetime
 from pathlib import Path
 
 from .config import MAX_LISTING_AGE_DAYS, RAW_DIR, STATE_PATH
-from .currency import bam_to_eur, price_per_km
+from .currency import price_per_km
 
 
 def _now_iso() -> str:
@@ -83,7 +83,6 @@ def merge_into_state(
         existing = state.get(listing_id)
         if existing is None:
             enriched = dict(item)
-            enriched["price_eur"] = bam_to_eur(price_bam)
             enriched["price_per_km"] = price_per_km(price_bam, item.get("mileage_km"))
             enriched["first_seen_date"] = run_date.isoformat()
             enriched["last_seen_date"] = run_date.isoformat()
@@ -102,7 +101,6 @@ def merge_into_state(
             if key == "price_history" or value is None:
                 continue
             existing[key] = value
-        existing["price_eur"] = bam_to_eur(existing.get("price_bam"))
         existing["price_per_km"] = price_per_km(existing.get("price_bam"), existing.get("mileage_km"))
 
         last_price = existing["price_history"][-1]["price_bam"] if existing.get("price_history") else None

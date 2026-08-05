@@ -24,7 +24,6 @@ def test_new_listing_is_added():
     assert state["a1"]["first_seen_date"] == "2026-07-22"
     assert state["a1"]["price_history"] == [{"date": "2026-07-22", "price_bam": 24500}]
     assert state["a1"]["days_listed"] == 2
-    assert state["a1"]["price_eur"] == round(24500 / 1.95583, 2)
 
 
 def test_price_change_is_recorded():

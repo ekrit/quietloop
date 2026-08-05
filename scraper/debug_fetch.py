@@ -94,6 +94,35 @@ def main() -> None:
     print("--- NUXT payload ---")
     report_nuxt_state(text)
 
+    print("--- raw response body (first 3000 chars, for non-HTML/API responses) ---")
+    print(text[:3000])
+
+    try:
+        parsed = json.loads(text)
+    except (json.JSONDecodeError, ValueError):
+        return
+    print("--- parsed as bare JSON (not a __NUXT__ HTML page) ---")
+    if isinstance(parsed, dict):
+        print(f"top_level_keys={list(parsed.keys())}")
+        for key in ("meta", "links", "pagination", "total", "per_page", "current_page", "last_page", "filters", "aggregations"):
+            if key in parsed:
+                print(f"  {key}={json.dumps(parsed[key], ensure_ascii=False)[:4000]}")
+        data = parsed.get("data")
+        if isinstance(data, list) and data:
+            print(f"data: len={len(data)}, item_keys={list(data[0].keys())}")
+            dates = [item.get("date") for item in data if isinstance(item.get("date"), (int, float))]
+            if dates:
+                import datetime as _dt
+                newest = _dt.datetime.fromtimestamp(max(dates), tz=_dt.timezone.utc)
+                oldest = _dt.datetime.fromtimestamp(min(dates), tz=_dt.timezone.utc)
+                print(f"date range on this page: oldest={oldest.date()} newest={newest.date()} (monotonic_nonincreasing={dates == sorted(dates, reverse=True)})")
+                print(f"all dates (unix): {dates}")
+            print("--- sample item (data[0]) ---")
+            print(json.dumps(data[0], ensure_ascii=False, indent=2))
+            if len(data) > 1:
+                print("--- sample item (data[1]) ---")
+                print(json.dumps(data[1], ensure_ascii=False, indent=2))
+
 
 if __name__ == "__main__":
     main()
