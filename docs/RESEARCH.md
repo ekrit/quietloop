@@ -772,6 +772,35 @@ which skips removed/aged_out determination for them rather than guessing.
 See §6b for the full reasoning on why raising a cap doesn't fix a backlog
 that's genuinely bigger than any daily page budget.
 
+### 10.2 Three more verticals added (2026-08-05): heavy machinery, kitchen gadgets, phone accessories
+
+Added per explicit request, same testing-vertical pattern as §10 — real
+category IDs confirmed via live "Debug fetch" runs against
+`https://olx.ba/pretraga?trazilica=<term>`'s
+`state.search.aggregations.categories`, not guessed.
+
+| Vertical | Subcategories used | Notes |
+|---|---|---|
+| Heavy Machinery | Traktori (`1093`, ~1.4k), Buldozeri (`1107`, 59), Bageri (`1106`, 5), Kranovi i dizalice (`1115`, 147) — all under parent "Biznis i Industrija" id=224 | Found via three separate searches: `trazilica=traktor`, `buldozer`, `kran`. Excludes the ~15+ parts/attachment subcategories that also turned up (tractor tires, plows, spare parts, forestry-machinery attachments, etc.) — those are accessories, not the machines themselves |
+| Kitchen Gadgets | Friteze (`2667`, ~2.8k — air fryers, dominant), Blenderi (`2454`), Kuhinjski mikseri (`832`), Mikrovalne pecnice (`1886`), Aparat za hljeb (`835`), Ostali kuhinjski uredjaji (`838`), Rerne na plocu (`1277`), Elektricni rezaci (`836`) | Found via `trazilica=friteza`, mostly under parent "Moj dom" id=701 with overlap into "Tehnika" id=14. Deliberately excludes big built-in/fixed appliances also found in that search (Frizideri/fridges, Elektricne sporete/stoves, Ugradbene ploce/built-in hobs, Kuhinjski elementi/cabinets) — those are kitchen renovation/furniture, not the countertop "gadgets" asked for |
+| Phone Accessories | Slusalice za mobitele (`1044`, ~12.6k — phone headphones, dominant), Bluetooth uredjaji (`34`), Punjaci za mobitele i tablete (`254`), Kablovi za mobitele (`1045`), Power Bank (`2154`), Maske za mobitele (`1092`), Nosaci/drzaci za mobitele (`2031`) | Found via `trazilica=slusalice`, all under parent "Mobilni uredjaji" id=3. Excludes non-phone headphone categories from the same search (PC slusalice/1499 under Kompjuteri, Slusalice za muzicku opremu/1235 under Muzicka oprema, Slusalice za konzole/2151 under Video igre) since those aren't phone accessories. Also excludes Smartwatch (`2076`) and Tablet PCs (`1495`) from the same result set since both are already their own verticals here (§10) |
+
+**Price thresholds** (judgment calls, same caveat as §10's): Heavy
+Machinery ≥3,000 KM (big-ticket equipment; excludes stray parts/listings
+that land in these categories by accident), Kitchen Gadgets ≥60 KM,
+Phone Accessories ≥20 KM (a cheap category by nature — headphones,
+chargers, cables, cases — the floor here just excludes throwaway junk,
+not "cheap" itself).
+
+Unlike cars' brand-based text search (§6), these three (like all of §10's
+verticals) filter by real `category_id`, so the free-text noise seen
+during *discovery* (e.g. `trazilica=buldozer` also surfacing an RC toy
+bulldozer under "Igre i igracke" id=283, and `trazilica=slusalice`
+surfacing ear-protection under "Biznis i Industrija") never reaches the
+actual scrape — that noise only showed up in the one-off research
+searches used to find the IDs, not in the categories the scraper
+actually pulls from.
+
 ## 11. Import-worthiness scoring (`scraper/analysis.py`)
 
 The end goal stated for this project is a website/browser extension that
