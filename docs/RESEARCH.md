@@ -271,7 +271,6 @@ parsing, location lookup) or blocked on a confirmed detail-page URL.
   "title": "VW Passat B8 2.0 TDI ...", // (✓)
 
   "price_bam": 24500,                 // (✓) clean number straight from the payload
-  "price_eur": 12527,                // (✓) derived, fixed peg 1 EUR = 1.95583 BAM
   "price_per_km": 0.31,              // (✓) derived: price / mileage_km
 
   "year": 2018,                       // (✓) from special_labels "Godište"
