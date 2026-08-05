@@ -5,7 +5,8 @@ untouched. This module is a *separate*, explicitly-labeled-as-testing
 extension covering more verticals the user wants data on before deciding
 whether any of them are worth pursuing for real: bicycles, PCs/laptops,
 expensive clothing, sports/ski/outdoor equipment, mobile phones, watches,
-gaming consoles, tablets, smartwatches, and digital cameras.
+gaming consoles, tablets, smartwatches, digital cameras, heavy machinery,
+kitchen gadgets, and phone accessories.
 
 Real category IDs below came from a live "Debug fetch" run against
 https://olx.ba/pretraga (state.search.aggregations.categories, including
@@ -215,5 +216,80 @@ VERTICALS: list[Vertical] = [
         min_price_bam=600,  # was 300
         subcategories=[SubCategory("Digitalni fotoaparati", 112)],
         known_brands=["Canon", "Nikon", "Sony", "Fujifilm", "Panasonic", "Olympus", "Leica", "Pentax", "GoPro", "DJI", "Kodak"],
+    ),
+    # Added 2026-08-05 per explicit request. Category IDs below CONFIRMED via
+    # live "Debug fetch" runs against /pretraga?trazilica=<term> (same
+    # discipline as the rest of this file) -- all four sit under top-level
+    # id=224 "Biznis i Industrija" and were found via trazilica=traktor,
+    # buldozer, and kran respectively (kran's own search turned up the
+    # "Kranovi i dizalice" id directly in state.search.aggregations.categories).
+    Vertical(
+        name="Heavy Machinery",
+        slug="heavy_machinery",
+        min_price_bam=3000,  # big-ticket equipment; excludes stray parts/attachments
+        subcategories=[
+            SubCategory("Traktori", 1093),
+            SubCategory("Buldozeri", 1107),
+            SubCategory("Bageri", 1106),
+            SubCategory("Kranovi i dizalice", 1115),
+        ],
+        known_brands=[
+            "John Deere", "Case IH", "New Holland", "Massey Ferguson", "Fendt",
+            "Deutz-Fahr", "Zetor", "IMT", "Ursus", "Same", "Landini", "Kubota",
+            "Caterpillar", "CAT", "JCB", "Komatsu", "Liebherr", "Volvo",
+            "Hitachi", "Bobcat", "Doosan", "Hyundai", "Case",
+        ],
+    ),
+    # Category IDs CONFIRMED via trazilica=friteza -- mostly under top-level
+    # id=701 "Moj dom", with overlap into id=14 "Tehnika". Deliberately
+    # excludes the big built-in/fixed appliances that also turned up in that
+    # search (Frizideri/fridges, Elektricne sporete/stoves, Ugradbene
+    # ploce/built-in hobs, Kuhinjski elementi/cabinets) -- those read as
+    # kitchen renovation/furniture, not the countertop "gadgets" asked for.
+    Vertical(
+        name="Kitchen Gadgets",
+        slug="kitchen_gadgets",
+        min_price_bam=60,
+        subcategories=[
+            SubCategory("Friteze", 2667),  # air fryers -- dominant subcategory
+            SubCategory("Blenderi", 2454),
+            SubCategory("Kuhinjski mikseri", 832),
+            SubCategory("Mikrovalne pecnice", 1886),
+            SubCategory("Aparat za hljeb", 835),
+            SubCategory("Ostali kuhinjski uredjaji", 838),
+            SubCategory("Rerne na plocu", 1277),
+            SubCategory("Elektricni rezaci", 836),
+        ],
+        known_brands=[
+            "Bosch", "Philips", "Tefal", "Moulinex", "Braun", "Gorenje",
+            "Beko", "Rowenta", "DeLonghi", "KitchenAid", "Kenwood", "Ninja",
+            "Russell Hobbs", "Panasonic", "Samsung", "LG", "Vivax", "Zepter",
+        ],
+    ),
+    # Category IDs CONFIRMED via trazilica=slusalice -- mostly under
+    # top-level id=3 "Mobilni uredjaji" (the phone-accessory tree). Deliberately
+    # excludes id=1044's siblings that are already their own verticals here
+    # (Smartwatch/2076, Tablet PCs/1495) and excludes non-phone headphone
+    # categories from the same search (PC slusalice/1499, Slusalice za
+    # muzicku opremu/1235, Slusalice za konzole/2151) since those belong to
+    # computers/music-gear/consoles, not phone accessories.
+    Vertical(
+        name="Phone Accessories",
+        slug="phone_accessories",
+        min_price_bam=20,  # cheap category by nature; floor just excludes throwaway junk
+        subcategories=[
+            SubCategory("Slusalice za mobitele", 1044),  # phone headphones -- dominant
+            SubCategory("Bluetooth uredjaji", 34),
+            SubCategory("Punjaci za mobitele i tablete", 254),
+            SubCategory("Kablovi za mobitele", 1045),
+            SubCategory("Power Bank", 2154),
+            SubCategory("Maske za mobitele", 1092),
+            SubCategory("Nosaci/drzaci za mobitele", 2031),
+        ],
+        known_brands=[
+            "Apple", "AirPods", "Samsung", "Sony", "JBL", "Bose", "Xiaomi",
+            "Anker", "Baseus", "Huawei", "Beats", "Sennheiser", "Skullcandy",
+            "Marshall", "Ugreen", "Spigen",
+        ],
     ),
 ]
