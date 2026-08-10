@@ -1,0 +1,122 @@
+name: Daily scrape
+
+on:
+  schedule:
+    # 23:00 UTC daily = 01:00 in Bosnia during CEST/summer time (UTC+2, in
+    # effect now). Cron is fixed in UTC and doesn't shift for DST, so once
+    # BiH falls back to CET (UTC+1) in winter, this becomes 00:00 local —
+    # bump to "0 0 * * *" then if you want it to stay at 1am local.
+    - cron: "0 23 * * *"
+  workflow_dispatch: {} # lets you trigger a run manually from the Actions tab
+
+permissions:
+  contents: write
+
+# Prevents two runs from overlapping (e.g. a manual trigger during the
+# scheduled run) and stepping on each other's commit/push.
+concurrency:
+  group: quietloop-daily
+  cancel-in-progress: false
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+    # Hard cap so a stuck request/loop can't hang forever or quietly burn
+    # the whole month's Actions-minutes budget in one run. Bumped 60->120 when
+    # the watchlist grew 6->17 brands (a real 17-brand run took ~32.5 min).
+    # Bumped again 120->180 for the 17->30 expansion -- proportionally that's
+    # only ~57 min, but several of the new entries are free-text searches
+    # with no confirmed brand_id, which can be noisier/slower per page than
+    # the ID-based ones, so the margin is deliberately generous until a real
+    # run confirms the actual number.
+    timeout-minutes: 180
+    steps:
+      - name: Check out repo
+        uses: actions/checkout@v4
+
+      # actions/checkout above pins to whatever commit was HEAD when this run
+      # was *created*, not when its job actually starts -- if this run sat
+      # queued behind another one in the `quietloop-daily` concurrency
+      # group (that's the point of the group: serialize job *execution*, not
+      # re-resolve the ref), it would otherwise scrape and merge against a
+      # stale data/listings.json, then fail to push once it discovers the
+      # other run already moved main forward. Realized this the hard way on
+      # 2026-07-23: a manual validation run and the nightly schedule
+      # overlapped, the second one queued correctly but still checked out
+      # the pre-queue commit, and its push died on an unresolvable
+      # data/listings.json merge conflict (scrape itself was fine, healthy=
+      # true -- only the push failed). Forcing the worktree to the actual
+      # current tip right before scraping means merge_into_state() always
+      # starts from the freshest committed state, so the eventual push is
+      # always a clean fast-forward.
+      - name: Sync to the current branch tip (guards against a stale checkout if this run queued behind another)
+        run: |
+          git fetch origin "${{ github.ref_name }}"
+          git reset --hard "origin/${{ github.ref_name }}"
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -r requirements-dev.txt
+
+      - name: Run tests
+        run: pytest tests/ -q
+
+      - name: Run scraper
+        id: scrape
+        run: |
+          set +e
+          python main.py
+          echo "exit_code=$?" >> "$GITHUB_OUTPUT"
+          exit 0 # never fail this step directly — the last step below does that instead
+
+      # Runs no matter what happened above (failed install, failed tests,
+      # failed/skipped scrape, timeout) — this is what guarantees the repo
+      # never goes 60 days without a commit, which is the one thing that
+      # would make GitHub auto-disable this schedule permanently. Pure
+      # bash/coreutils only, deliberately not dependent on Python/pip
+      # having worked, so it survives even an install-step failure.
+      - name: Record a heartbeat, commit and push whatever data exists
+        if: always()
+        run: |
+          mkdir -p data
+          {
+            echo "last_attempted_run_utc=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            echo "scrape_exit_code=${{ steps.scrape.outputs.exit_code }}"
+          } > data/last_run.txt
+
+          git config user.name "quietloop-bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add -A data/
+
+          COMMIT_MSG="Daily scrape: $(date -u +%F)"
+
+          if git diff --cached --quiet; then
+            echo "No changes to commit (unexpected — heartbeat file should always differ)."
+          else
+            git commit -m "$COMMIT_MSG"
+            pushed=false
+            for attempt in 1 2 3; do
+              if git pull --rebase origin "${{ github.ref_name }}" && git push; then
+                pushed=true
+                break
+              fi
+              echo "push attempt $attempt failed, retrying in 5s..."
+              sleep 5
+            done
+            if [ "$pushed" = false ]; then
+              echo "::error::failed to push after 3 attempts — today's commit exists locally on the runner but was NOT saved to the repo"
+              exit 1
+            fi
+          fi
+
+      - name: Fail the job if the scraper or push didn't succeed
+        if: steps.scrape.outputs.exit_code != '0'
+        run: |
+          echo "main.py exited with code ${{ steps.scrape.outputs.exit_code }} (or never ran)."
+          echo "Any data collected before the failure was still committed above,"
+          echo "but this run needs attention — check the 'Run scraper' step's logs."
+          exit 1

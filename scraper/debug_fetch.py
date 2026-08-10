@@ -1,0 +1,128 @@
+"""One-off diagnostic, NOT part of the daily pipeline.
+
+Fetches a single URL and reports what's actually there — the raw
+HTML report, plus a dump of the deserialized __NUXT__ state (see
+scraper/nuxt_payload.py and parser.py for what this led to).
+
+Run via the "Debug fetch" GitHub Actions workflow (manual dispatch only)
+or locally: `python -m scraper.debug_fetch [url]` (requires `node` on PATH
+for the __NUXT__ dump; the plain-HTML report works without it).
+"""
+from __future__ import annotations
+
+import json
+import re
+import sys
+from pathlib import Path
+
+from .config import BASE_URL
+from .http_client import PoliteSession
+from .nuxt_payload import NuxtPayloadError, extract_nuxt_state
+
+
+def report_nuxt_state(html: str) -> None:
+    try:
+        data = extract_nuxt_state(html)
+    except NuxtPayloadError as exc:
+        print(f"extract_nuxt_state failed: {exc}")
+        return
+
+    print("Successfully deserialized the __NUXT__ payload (sandboxed).")
+    print(f"top_level_type={type(data).__name__}")
+    if not isinstance(data, dict):
+        return
+    print(f"top_level_keys={list(data.keys())}")
+
+    def walk(obj, path="", depth=0):
+        if depth > 5:
+            return
+        if isinstance(obj, list) and obj and isinstance(obj[0], dict):
+            print(f"  candidate list at {path or '<root>'}: len={len(obj)}, item_keys={list(obj[0].keys())}")
+        elif isinstance(obj, dict):
+            for k, v in obj.items():
+                walk(v, f"{path}.{k}" if path else k, depth + 1)
+
+    walk(data)
+
+    search = data.get("state", {}).get("search", {})
+    results = search.get("results")
+    if isinstance(results, list) and results:
+        print("--- sample listing (state.search.results[0]) ---")
+        print(json.dumps(results[0], ensure_ascii=False, indent=2))
+        if len(results) > 1:
+            print("--- sample listing (state.search.results[1]) ---")
+            print(json.dumps(results[1], ensure_ascii=False, indent=2))
+
+    categories = search.get("aggregations", {}).get("categories")
+    if isinstance(categories, list):
+        print("--- state.search.aggregations.categories ---")
+        for cat in categories:
+            print(f"  id={cat.get('id')} name={cat.get('name')!r} count={cat.get('count')}")
+            for sub in cat.get("sub_categories") or []:
+                print(f"    sub id={sub.get('id')} name={sub.get('name')!r} count={sub.get('count')}")
+
+    attributes = search.get("attributes")
+    if isinstance(attributes, list):
+        print("--- state.search.attributes (category's own filter-attribute schema) ---")
+        for attr in attributes:
+            name = attr.get("name")
+            display_name = attr.get("display_name")
+            options = attr.get("options")
+            print(f"  id={attr.get('id')} name={name!r} display_name={display_name!r} input_type={attr.get('input_type')}")
+            if isinstance(options, list) and options:
+                preview = options[:15]
+                print(f"    options ({len(options)} total): {preview}")
+
+    out_path = Path("/tmp/nuxt_payload.json")
+    out_path.write_text(json.dumps(data, ensure_ascii=False, indent=2)[:200000])
+    print(f"wrote (possibly truncated) payload to {out_path}")
+
+
+def main() -> None:
+    url = sys.argv[1] if len(sys.argv) > 1 and sys.argv[1] else f"{BASE_URL}/pretraga?category_id=18"
+    session = PoliteSession()
+    response = session.get(url)
+    text = response.text
+
+    print(f"status_code={response.status_code}")
+    print(f"final_url={response.url}")
+    print(f"content_length={len(text)}")
+
+    title_match = re.search(r"<title>(.*?)</title>", text, re.IGNORECASE | re.DOTALL)
+    print(f"title={title_match.group(1).strip() if title_match else None}")
+
+    print("--- NUXT payload ---")
+    report_nuxt_state(text)
+
+    print("--- raw response body (first 3000 chars, for non-HTML/API responses) ---")
+    print(text[:3000])
+
+    try:
+        parsed = json.loads(text)
+    except (json.JSONDecodeError, ValueError):
+        return
+    print("--- parsed as bare JSON (not a __NUXT__ HTML page) ---")
+    if isinstance(parsed, dict):
+        print(f"top_level_keys={list(parsed.keys())}")
+        for key in ("meta", "links", "pagination", "total", "per_page", "current_page", "last_page", "filters", "aggregations"):
+            if key in parsed:
+                print(f"  {key}={json.dumps(parsed[key], ensure_ascii=False)[:4000]}")
+        data = parsed.get("data")
+        if isinstance(data, list) and data:
+            print(f"data: len={len(data)}, item_keys={list(data[0].keys())}")
+            dates = [item.get("date") for item in data if isinstance(item.get("date"), (int, float))]
+            if dates:
+                import datetime as _dt
+                newest = _dt.datetime.fromtimestamp(max(dates), tz=_dt.timezone.utc)
+                oldest = _dt.datetime.fromtimestamp(min(dates), tz=_dt.timezone.utc)
+                print(f"date range on this page: oldest={oldest.date()} newest={newest.date()} (monotonic_nonincreasing={dates == sorted(dates, reverse=True)})")
+                print(f"all dates (unix): {dates}")
+            print("--- sample item (data[0]) ---")
+            print(json.dumps(data[0], ensure_ascii=False, indent=2))
+            if len(data) > 1:
+                print("--- sample item (data[1]) ---")
+                print(json.dumps(data[1], ensure_ascii=False, indent=2))
+
+
+if __name__ == "__main__":
+    main()

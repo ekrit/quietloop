@@ -1,0 +1,107 @@
+name: Daily scrape (testing verticals)
+
+# Time-boxed testing expansion (2026-07-23 -> 2026-08-01, see
+# scraper/categories.py) covering bicycles, PCs/laptops, expensive
+# clothing, and sports/ski equipment -- kept as a SEPARATE workflow from
+# daily-scrape.yml (cars) so this experiment can't destabilize the proven
+# car pipeline. scraper/multi_run.py itself no-ops past the testing
+# window, so this workflow doesn't need to be remembered/disabled once
+# it's over, though it's expected to be reviewed and likely retired then.
+
+on:
+  schedule:
+    # 1 hour before the cars run (23:00 UTC) -- different concurrency
+    # group already keeps them from racing each other's job execution,
+    # this just reduces the odds of both pushing to data/ around the same
+    # moment.
+    - cron: "0 22 * * *"
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+concurrency:
+  group: quietloop-verticals-daily
+  cancel-in-progress: false
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+    # Bumped 120->220 alongside the max_pages_per_subcategory 40->120 fix
+    # (see categories.py) -- 21 of 27 subcategories hit the old 40-page cap
+    # simultaneously in one run, so raising it could plausibly push total
+    # runtime well past the old 120-min budget in the worst case.
+    timeout-minutes: 220
+    steps:
+      - name: Check out repo
+        uses: actions/checkout@v4
+
+      # Same fix as daily-scrape.yml (see its 2026-07-23 commit): a run
+      # queued behind another in this concurrency group would otherwise
+      # scrape/merge against a stale checkout and fail to push once it
+      # discovers the other run already moved main forward.
+      - name: Sync to the current branch tip (guards against a stale checkout if this run queued behind another)
+        run: |
+          git fetch origin "${{ github.ref_name }}"
+          git reset --hard "origin/${{ github.ref_name }}"
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -r requirements-dev.txt
+
+      - name: Run tests
+        run: pytest tests/ -q
+
+      - name: Run verticals scraper
+        id: scrape
+        run: |
+          set +e
+          python -m scraper.multi_run
+          echo "exit_code=$?" >> "$GITHUB_OUTPUT"
+          exit 0
+
+      - name: Record a heartbeat, commit and push whatever data exists
+        if: always()
+        run: |
+          mkdir -p data
+          {
+            echo "last_attempted_run_utc=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            echo "scrape_exit_code=${{ steps.scrape.outputs.exit_code }}"
+          } > data/verticals_last_run.txt
+
+          git config user.name "quietloop-bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add -A data/
+
+          COMMIT_MSG="Daily verticals scrape: $(date -u +%F)"
+
+          if git diff --cached --quiet; then
+            echo "No changes to commit (unexpected — heartbeat file should always differ)."
+          else
+            git commit -m "$COMMIT_MSG"
+            pushed=false
+            for attempt in 1 2 3; do
+              if git pull --rebase origin "${{ github.ref_name }}" && git push; then
+                pushed=true
+                break
+              fi
+              echo "push attempt $attempt failed, retrying in 5s..."
+              sleep 5
+            done
+            if [ "$pushed" = false ]; then
+              echo "::error::failed to push after 3 attempts — today's commit exists locally on the runner but was NOT saved to the repo"
+              exit 1
+            fi
+          fi
+
+      - name: Fail the job if the scraper or push didn't succeed
+        if: steps.scrape.outputs.exit_code != '0'
+        run: |
+          echo "multi_run.py exited with code ${{ steps.scrape.outputs.exit_code }} (or never ran)."
+          echo "Any data collected before the failure was still committed above,"
+          echo "but this run needs attention — check the 'Run verticals scraper' step's logs."
+          exit 1

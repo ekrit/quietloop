@@ -1,0 +1,87 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://github.com/ekrit/quietloop/schema/car_listing.schema.json",
+  "title": "CarListing",
+  "description": "Schema for a single scraped car listing record, as tracked in data/listings.json. See docs/RESEARCH.md for rationale.",
+  "type": "object",
+  "required": [
+    "id",
+    "url",
+    "title",
+    "price_bam",
+    "year",
+    "mileage_km",
+    "published_date",
+    "first_seen_date",
+    "last_seen_date",
+    "status",
+    "price_history",
+    "scraped_at"
+  ],
+  "properties": {
+    "id": { "type": "string", "description": "Source listing id, stable identity" },
+    "url": { "type": "string", "format": "uri", "description": "NOT YET CONFIRMED -- best-effort guess, see parser.py module docstring" },
+    "brand": { "type": ["string", "null"], "description": "Derived from brand_id (if confirmed) or matched against a known-brand list in the title -- null if neither matched. No per-brand watchlist/query anymore." },
+    "model": { "type": ["string", "null"], "description": "Not implemented yet -- would need title parsing against a known model-name list per brand" },
+    "variant": { "type": ["string", "null"], "description": "Free-text trim/engine variant, best-effort parse" },
+    "title": { "type": "string" },
+
+    "brand_id": { "type": ["integer", "null"], "description": "Source site's own numeric brand id, straight from the search payload" },
+    "category_id": { "type": ["integer", "null"] },
+    "city_id": { "type": ["integer", "null"], "description": "Numeric only -- no city-name lookup table built yet" },
+    "condition_raw": { "type": ["string", "null"], "description": "Source site's own condition string (e.g. \"used\"), unmapped" },
+
+    "price_bam": { "type": "number", "minimum": 0 },
+    "price_eur": { "type": "number", "minimum": 0, "description": "Derived via fixed peg 1 EUR = 1.95583 BAM" },
+    "price_per_km": { "type": ["number", "null"], "description": "Derived: price_bam / mileage_km" },
+
+    "year": { "type": "integer" },
+    "mileage_km": { "type": "integer", "minimum": 0 },
+    "fuel_type": { "type": ["string", "null"] },
+    "transmission": { "type": ["string", "null"] },
+    "power_kw": { "type": ["number", "null"] },
+    "power_hp": { "type": ["number", "null"] },
+    "engine_ccm": { "type": ["number", "null"] },
+    "drivetrain": { "type": ["string", "null"] },
+    "body_type": { "type": ["string", "null"] },
+    "doors": { "type": ["integer", "null"] },
+    "color": { "type": ["string", "null"] },
+
+    "registered_until": { "type": ["string", "null"], "description": "BiH-specific registration validity" },
+    "customs_paid": { "type": ["boolean", "null"], "description": "\"Carina placena\" — critical for import cost math" },
+    "first_owner": { "type": ["boolean", "null"] },
+    "damage_flag": { "type": ["boolean", "null"], "description": "Parsed from title/description keywords" },
+
+    "seller_type": { "type": ["string", "null"], "enum": ["private", "dealer", null] },
+    "location_city": { "type": ["string", "null"] },
+    "location_canton": { "type": ["string", "null"] },
+
+    "photo_count": { "type": ["integer", "null"] },
+    "description_length": { "type": ["integer", "null"] },
+
+    "published_date": { "type": "string", "format": "date", "description": "Source site's own publish date — the true start of the days_listed clock" },
+    "first_seen_date": { "type": "string", "format": "date", "description": "When we first scraped this listing (bookkeeping only, not the market clock)" },
+    "last_seen_date": { "type": "string", "format": "date" },
+    "days_listed": { "type": ["integer", "null"], "description": "(removed_date or aged_out_date or today) - published_date; frozen once terminal" },
+    "status": {
+      "type": "string",
+      "enum": ["active", "removed", "aged_out"],
+      "description": "aged_out = fell outside the 45-day window while still active; NOT equivalent to removed/sold — out of scope for analysis"
+    },
+    "removed_date": { "type": "string", "format": "date", "description": "Set when status becomes removed" },
+    "aged_out_date": { "type": "string", "format": "date", "description": "Set when status becomes aged_out" },
+    "price_history": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["date", "price_bam"],
+        "properties": {
+          "date": { "type": "string", "format": "date" },
+          "price_bam": { "type": "number", "minimum": 0 }
+        }
+      }
+    },
+
+    "scraped_at": { "type": "string", "format": "date-time" }
+  }
+}
