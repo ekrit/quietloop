@@ -149,13 +149,25 @@ def run(run_date: date | None = None) -> tuple[dict, bool]:
     all_listings: dict[str, dict] = {}
     brands_failed = 0
     circuit_opened = False
-    incomplete_brands: set[str] = set()
+    # CONFIRMED BUG 2026-08-26: only tracked brands that hit their page cap --
+    # a brand that never got a chance to run at all (circuit breaker tripped
+    # before/during its turn) or that raised an unexpected exception was
+    # never added here, so merge_into_state trusted "not seen" as "actually
+    # removed" for it. A live run where olx.ba returned 403 on the very
+    # first request tripped the circuit breaker immediately, leaving this
+    # set empty, and wrongly marked all ~8,921 previously-active listings
+    # removed in one run (see docs/RESEARCH.md §6b/§14 for the incident and
+    # data restore). Fixed by tracking the complement instead: only a brand
+    # that affirmatively reached its own natural stop this run is trusted
+    # for removal detection -- everything else (page cap, exception, never
+    # attempted due to a circuit trip) defaults to incomplete.
+    completed_brands: set[str] = set()
     try:
         for brand in config.BRAND_WATCHLIST:
             try:
                 items, hit_cap = scrape_brand(session, brand, run_date)
-                if hit_cap:
-                    incomplete_brands.add(brand.name)
+                if not hit_cap:
+                    completed_brands.add(brand.name)
                 for item in items:
                     all_listings.setdefault(item["id"], item)  # de-dupe across brand queries
             except CircuitOpenError:
@@ -169,6 +181,8 @@ def run(run_date: date | None = None) -> tuple[dict, bool]:
 
     # whatever was collected before a failure still gets saved below —
     # partial data beats losing the whole day's run to one bad page.
+
+    incomplete_brands = {brand.name for brand in config.BRAND_WATCHLIST} - completed_brands
 
     scraped = list(all_listings.values())
     save_raw_snapshot(run_date, scraped)

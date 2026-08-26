@@ -920,3 +920,43 @@ longest-first matching, no-match/None handling, model-hint trimming and
 truncation) and a new case in `tests/test_multi_run.py` confirming
 `run_vertical` actually tags scraped items with `brand`/`model_hint`.
 Full suite: 46 passed.
+
+## 13. Circuit-breaker trip wrongly marked ~8,921 cars removed (2026-08-25)
+
+**Incident:** olx.ba returned 403 on the very first request of the
+23:14 UTC cars run. The circuit breaker (`http_client.py`) correctly
+tripped after 3 consecutive hostile responses and aborted the run
+(`healthy=False`, `exit_code=1`) before a single brand finished. But
+`run.py` still called `merge_into_state()` with zero scraped listings,
+and since `incomplete_brands` was only ever populated when a brand hit
+its page cap (§6b's mechanism) — never when it was skipped entirely due
+to a circuit trip or an unexpected exception — every one of the 30
+watch-listed brands looked "fully scanned and now empty" to
+`merge_into_state`. Result: all ~8,921 previously-active listings got
+marked `removed` in a single run, the exact same failure class as §6b's
+page-cap incidents, just triggered by a different path (total abort
+instead of partial exhaustion).
+
+**Fix:** `run()` in `scraper/run.py` now tracks the complement —
+`completed_brands`, populated only when `scrape_brand()` returns via its
+own natural stop (`hit_cap=False`) — and derives
+`incomplete_brands = all watch-listed brands - completed_brands` at the
+end. This covers every way a brand can fail to be fully verified this
+run (page cap, an unexpected exception, or never being attempted because
+the circuit breaker tripped before its turn), not just the one case §6b
+originally guarded against. `tests/test_run.py` added: a circuit-breaker
+trip before any brand runs, a brand-specific exception, and the
+already-working natural-completion case, all asserting the right
+listings stay `active` vs. get marked `removed`.
+
+`data/listings.json` restored to the last known-good state (commit
+`f7bcb416`, the 01:00 UTC run earlier the same day — 9,040 tracked,
+7,993 active) rather than the corrupted 23:14 UTC commit.
+`data/import_worthiness_report.json` regenerated to match.
+`data/raw/2026-08-25.json` (the empty `[]` snapshot from the failed run)
+was left as-is — an honest record that the site blocked that attempt,
+not something to hide.
+
+Whether the 403 was a one-off block or the start of something more
+persistent (olx.ba tightening anti-scraping measures) is not yet known —
+worth watching the next few scheduled runs.
