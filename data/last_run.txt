@@ -1,2 +1,2 @@
-last_attempted_run_utc=2026-09-13T00:28:37Z
-scrape_exit_code=1
+last_attempted_run_utc=2026-09-13T09:56:40Z
+scrape_exit_code=0
