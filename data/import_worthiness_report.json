@@ -1,15 +1,15 @@
 {
   "cars": [
     {
-      "active": 2356,
+      "active": 2377,
       "aged_out": 0,
-      "dealer_share": 0.48116800677105376,
-      "discount_rate": 0.18154887854422344,
+      "dealer_share": 0.4786073825503356,
+      "discount_rate": 0.18288590604026847,
       "group": "Volkswagen",
       "insufficient_data": false,
       "median_days_to_sell": 1,
-      "median_price_bam": 36900,
-      "n": 2363,
+      "median_price_bam": 36900.0,
+      "n": 2384,
       "removed": 7,
       "score": 97.2,
       "sell_through_rate": 1.0
@@ -337,15 +337,15 @@
       "sell_through_rate": null
     },
     {
-      "active": 1369,
+      "active": 1379,
       "aged_out": 0,
-      "dealer_share": 0.6542669584245077,
+      "dealer_share": 0.6531498913830558,
       "discount_rate": null,
       "group": "Skoda",
       "insufficient_data": true,
       "median_days_to_sell": null,
       "median_price_bam": 35900,
-      "n": 1371,
+      "n": 1381,
       "removed": 2,
       "score": null,
       "sell_through_rate": null
