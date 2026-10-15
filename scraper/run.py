@@ -91,6 +91,7 @@ def scrape_brand(
     consecutive_empty_pages = 0
     seen_ids: set[str] = set()
     reached_window_edge = False
+    stale_pages = 0
 
     for page in range(1, config.MAX_PAGES_PER_BRAND + 1):
         url = build_search_url(brand, page)
@@ -117,14 +118,12 @@ def scrape_brand(
                     config.MAX_LISTING_AGE_DAYS,
                 )
             return collected, not reached_window_edge
-        if brand.depth_capped and page_ids <= (seen_ids | known_ids):
-            logger.info("brand=%s page=%d has no listings new since earlier runs -- stopping", brand.name, page)
-            return collected, True
         seen_ids |= page_ids
 
         in_window = [item for item in page_listings if within_window(item.get("published_date"), run_date)]
         if len(in_window) < len(page_listings):
             reached_window_edge = True
+        page_kept: list[dict] = []
         for item in in_window:
             item["brand"] = brand.name  # authoritative: which search found it
             # safety net: don't trust server-side filters blindly, and don't
@@ -136,6 +135,15 @@ def scrape_brand(
             if (item.get("year") or 0) < config.MIN_YEAR:
                 continue
             collected.append(item)
+            page_kept.append(item)
+
+        # Only listings that pass the filters ever reach state, so only those
+        # can be "known" -- pages also carry filtered-out junk that never will.
+        if brand.depth_capped:
+            stale_pages = stale_pages + 1 if all(i["id"] in known_ids for i in page_kept) else 0
+            if stale_pages >= 2:
+                logger.info("brand=%s page=%d: 2 pages with nothing new since earlier runs -- stopping", brand.name, page)
+                return collected, True
 
         if not in_window:
             consecutive_empty_pages += 1

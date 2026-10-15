@@ -161,15 +161,30 @@ def test_repeat_after_passing_window_edge_counts_as_complete():
     assert sorted(i["id"] for i in items) == ["1", "2"]
 
 
-def test_depth_capped_brand_stops_once_nothing_is_new():
-    session = _PagedSession([_car_html([1, 2]), _car_html([3, 4]), _car_html([5, 6])])
+def test_depth_capped_brand_stops_after_two_pages_with_nothing_new():
+    session = _PagedSession([_car_html([1, 2]), _car_html([3, 4]), _car_html([5, 6]), _car_html([7, 8])])
     brand = config.Brand("Volkswagen", brand_id=89, depth_capped=True)
 
-    items, incomplete = run.scrape_brand(session, brand, date(2026, 8, 25), known_ids=frozenset({"3", "4"}))
+    items, incomplete = run.scrape_brand(
+        session, brand, date(2026, 8, 25), known_ids=frozenset({"3", "4", "5", "6", "7", "8"})
+    )
+
+    assert session.calls == 3
+    assert incomplete is True
+    assert sorted(i["id"] for i in items) == ["1", "2", "3", "4", "5", "6"]
+
+
+def test_depth_capped_ignores_filtered_out_junk_when_judging_staleness():
+    # Cheap/low-mileage listings on the page never reach state, so they can
+    # never be "known" -- they must not stop the brand from looking stale.
+    junk = _car_html([90, 91]).replace('"price": 30000', '"price": 100')
+    session = _PagedSession([_car_html([1]), junk, junk, _car_html([2])])
+    brand = config.Brand("Volkswagen", brand_id=89, depth_capped=True)
+
+    items, incomplete = run.scrape_brand(session, brand, date(2026, 8, 25), known_ids=frozenset({"1"}))
 
     assert session.calls == 2
     assert incomplete is True
-    assert sorted(i["id"] for i in items) == ["1", "2"]
 
 
 def test_watchlist_runs_depth_capped_brands_last():
