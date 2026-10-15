@@ -87,6 +87,8 @@ def scrape_brand(session: PoliteSession, brand: config.Brand, run_date: date) ->
     brands)."""
     collected: list[dict] = []
     consecutive_empty_pages = 0
+    seen_ids: set[str] = set()
+    reached_window_edge = False
 
     for page in range(1, config.MAX_PAGES_PER_BRAND + 1):
         url = build_search_url(brand, page)
@@ -97,7 +99,27 @@ def scrape_brand(session: PoliteSession, brand: config.Brand, run_date: date) ->
         if not page_listings:
             return collected, False  # no more results at all -- naturally done
 
+        # The site only serves a limited result depth for big brands, then
+        # keeps returning already-seen listings instead of an empty page --
+        # VW/Skoda were burning all 250 pages on repeats, exhausting the
+        # site's per-run request allowance before other brands ran. Stop;
+        # complete only if (newest-first) we'd already passed the 45-day edge.
+        page_ids = {item["id"] for item in page_listings}
+        if page_ids <= seen_ids:
+            if not reached_window_edge:
+                logger.warning(
+                    "brand=%s page=%d returned only already-seen listings before reaching the "
+                    "%d-day window edge -- result depth exhausted, scan is incomplete",
+                    brand.name,
+                    page,
+                    config.MAX_LISTING_AGE_DAYS,
+                )
+            return collected, not reached_window_edge
+        seen_ids |= page_ids
+
         in_window = [item for item in page_listings if within_window(item.get("published_date"), run_date)]
+        if len(in_window) < len(page_listings):
+            reached_window_edge = True
         for item in in_window:
             item["brand"] = brand.name  # authoritative: which search found it
             # safety net: don't trust server-side filters blindly, and don't
@@ -189,7 +211,9 @@ def run(run_date: date | None = None) -> tuple[dict, bool]:
     state = merge_into_state(state, scraped, run_date, incomplete_groups=frozenset(incomplete_brands))
     save_state(state)
 
-    healthy = not circuit_opened and brands_failed < len(config.BRAND_WATCHLIST)
+    # completed_brands empty = no brand got removal detection at all; that
+    # ran silently "green" for weeks (2026-09-19 -> 10-15) before anyone noticed.
+    healthy = not circuit_opened and brands_failed < len(config.BRAND_WATCHLIST) and bool(completed_brands)
     logger.info(
         "run complete: %d listings scraped today, %d total tracked in state, "
         "healthy=%s, incomplete_brands=%s",

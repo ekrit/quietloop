@@ -44,7 +44,9 @@ class PoliteSession:
                 time.sleep(2**attempt)
                 continue
 
-            if response.status_code in (403, 429):
+            # The site signals its rate limit with 500s (seen from 2026-09-19:
+            # after ~600 requests every URL returns 500), so 5xx counts too.
+            if response.status_code in (403, 429) or response.status_code >= 500:
                 self._consecutive_failures += 1
                 logger.warning(
                     "hostile status %s for %s (consecutive=%d)",
