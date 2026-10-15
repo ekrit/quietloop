@@ -76,7 +76,9 @@ def within_window(published_date: str | None, run_date: date) -> bool:
     return age <= config.MAX_LISTING_AGE_DAYS
 
 
-def scrape_brand(session: PoliteSession, brand: config.Brand, run_date: date) -> tuple[list[dict], bool]:
+def scrape_brand(
+    session: PoliteSession, brand: config.Brand, run_date: date, known_ids: frozenset[str] = frozenset()
+) -> tuple[list[dict], bool]:
     """Returns (collected, hit_page_cap). hit_page_cap is True if the loop
     ran out of MAX_PAGES_PER_BRAND without reaching a natural stop -- see
     storage.merge_into_state's incomplete_groups: a brand whose scan didn't
@@ -115,6 +117,9 @@ def scrape_brand(session: PoliteSession, brand: config.Brand, run_date: date) ->
                     config.MAX_LISTING_AGE_DAYS,
                 )
             return collected, not reached_window_edge
+        if brand.depth_capped and page_ids <= (seen_ids | known_ids):
+            logger.info("brand=%s page=%d has no listings new since earlier runs -- stopping", brand.name, page)
+            return collected, True
         seen_ids |= page_ids
 
         in_window = [item for item in page_listings if within_window(item.get("published_date"), run_date)]
@@ -184,10 +189,11 @@ def run(run_date: date | None = None) -> tuple[dict, bool]:
     # for removal detection -- everything else (page cap, exception, never
     # attempted due to a circuit trip) defaults to incomplete.
     completed_brands: set[str] = set()
+    known_ids = frozenset(state.keys())
     try:
         for brand in config.BRAND_WATCHLIST:
             try:
-                items, hit_cap = scrape_brand(session, brand, run_date)
+                items, hit_cap = scrape_brand(session, brand, run_date, known_ids=known_ids)
                 if not hit_cap:
                     completed_brands.add(brand.name)
                 for item in items:

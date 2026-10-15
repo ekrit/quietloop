@@ -46,7 +46,7 @@ def test_circuit_breaker_trip_protects_untried_brands_from_false_removal():
     # chance to run at all here -- it must still be protected.
     watchlist = [config.Brand("Volkswagen", brand_id=89), config.Brand("Audi", brand_id=7)]
 
-    def fake_scrape_brand(session, brand, run_date):
+    def fake_scrape_brand(session, brand, run_date, **kwargs):
         raise CircuitOpenError("3 consecutive hostile responses")
 
     state, healthy = _run_with_scrape_brand(fake_scrape_brand, watchlist)
@@ -61,7 +61,7 @@ def test_unexpected_brand_exception_protects_that_brand_from_false_removal():
     # let merge_into_state treat that brand's listings as legitimately gone.
     watchlist = [config.Brand("Volkswagen", brand_id=89), config.Brand("Audi", brand_id=7)]
 
-    def fake_scrape_brand(session, brand, run_date):
+    def fake_scrape_brand(session, brand, run_date, **kwargs):
         if brand.name == "Volkswagen":
             raise ValueError("boom")
         return [], False  # Audi completes cleanly with nothing new
@@ -75,7 +75,7 @@ def test_unexpected_brand_exception_protects_that_brand_from_false_removal():
 def test_brand_that_completes_naturally_is_not_treated_as_incomplete():
     watchlist = [config.Brand("Volkswagen", brand_id=89)]
 
-    def fake_scrape_brand(session, brand, run_date):
+    def fake_scrape_brand(session, brand, run_date, **kwargs):
         return [], False  # natural stop, zero results today
 
     state, healthy = _run_with_scrape_brand(fake_scrape_brand, watchlist)
@@ -140,7 +140,7 @@ def test_scrape_brand_stops_when_site_repeats_results():
 def test_run_is_unhealthy_when_no_brand_completes():
     watchlist = [config.Brand("Volkswagen", brand_id=89)]
 
-    def fake_scrape_brand(session, brand, run_date):
+    def fake_scrape_brand(session, brand, run_date, **kwargs):
         return [], True  # every brand incomplete -> removal detection fully off
 
     _, healthy = _run_with_scrape_brand(fake_scrape_brand, watchlist)
@@ -159,3 +159,20 @@ def test_repeat_after_passing_window_edge_counts_as_complete():
 
     assert incomplete is False
     assert sorted(i["id"] for i in items) == ["1", "2"]
+
+
+def test_depth_capped_brand_stops_once_nothing_is_new():
+    session = _PagedSession([_car_html([1, 2]), _car_html([3, 4]), _car_html([5, 6])])
+    brand = config.Brand("Volkswagen", brand_id=89, depth_capped=True)
+
+    items, incomplete = run.scrape_brand(session, brand, date(2026, 8, 25), known_ids=frozenset({"3", "4"}))
+
+    assert session.calls == 2
+    assert incomplete is True
+    assert sorted(i["id"] for i in items) == ["1", "2"]
+
+
+def test_watchlist_runs_depth_capped_brands_last():
+    flags = [b.depth_capped for b in config.BRAND_WATCHLIST]
+    assert flags == sorted(flags)
+    assert len(config.BRAND_WATCHLIST) == 30
