@@ -71,6 +71,12 @@ class Brand:
     # param (works today, but can pick up false positives from listings
     # that merely mention the brand in their description/title).
     brand_id: Optional[int] = None
+    # The site serves only ~50 result pages per query, which never reaches
+    # the 45-day edge for these brands, so a full scan is impossible (no
+    # removal detection either way). Scan only until listings are already
+    # known from earlier days -- spends few requests of the site's ~600 per
+    # run limit, leaving the rest for brands that can complete.
+    depth_capped: bool = False
 
     def query_params(self) -> dict:
         if self.brand_id is not None:
@@ -90,12 +96,8 @@ class Brand:
 # -- explicitly named as a top-tier German-origin contributor to the fleet --
 # despite not being on the original watchlist at all.
 BRAND_WATCHLIST: list[Brand] = [
-    Brand("Volkswagen", brand_id=89),
-    Brand("Skoda", brand_id=77),
-    Brand("Audi", brand_id=7),
     Brand("Mercedes-Benz", brand_id=56),
     Brand("Porsche", brand_id=69),
-    Brand("BMW", brand_id=11),
     # CONFIRMED 2026-07-22/23: a live run with brand=64 returned 80 real
     # Opel listings (Mokka X, Grandland X, Insignia, etc., all genuinely
     # Opel in the title) -- promoted out of the "unconfirmed guess" tier.
@@ -107,7 +109,6 @@ BRAND_WATCHLIST: list[Brand] = [
     Brand("Hyundai"),
     Brand("Kia"),
     Brand("Ford"),
-    Brand("Peugeot"),
     Brand("Renault"),
     Brand("Alfa Romeo"),
     Brand("Fiat"),
@@ -123,6 +124,13 @@ BRAND_WATCHLIST: list[Brand] = [
     Brand("Jeep"),
     Brand("Subaru"),
     Brand("Mini"),
+    # Last, so if the site's request limit still cuts a run short, it's
+    # these (incomplete by nature anyway) that lose out.
+    Brand("Volkswagen", brand_id=89, depth_capped=True),
+    Brand("Skoda", brand_id=77, depth_capped=True),
+    Brand("Audi", brand_id=7, depth_capped=True),
+    Brand("BMW", brand_id=11, depth_capped=True),
+    Brand("Peugeot", depth_capped=True),
 ]
 
 # Same mapping as BRAND_WATCHLIST's confirmed ids, kept as a dict for
