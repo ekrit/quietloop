@@ -82,3 +82,80 @@ def test_brand_that_completes_naturally_is_not_treated_as_incomplete():
 
     assert healthy is True
     assert state["a1"]["status"] == "removed"  # genuinely not seen, scan was complete
+
+
+def _car_html(ids, published=(2026, 8, 24)):
+    import json
+    from datetime import datetime, timezone
+
+    ts = int(datetime(*published, 12, tzinfo=timezone.utc).timestamp())
+    results = [
+        {
+            "id": i,
+            "title": "Volkswagen Golf",
+            "price": 30000,
+            "date": ts,
+            "images": [],
+            "user_type": "user",
+            "state": "used",
+            "status": "active",
+            "brand_id": 89,
+            "category_id": 18,
+            "city_id": 1,
+            "special_labels": [
+                {"value": "150.000", "label": "Kilometraža", "unit": "km"},
+                {"value": 2019, "label": "Godište", "unit": None},
+            ],
+        }
+        for i in ids
+    ]
+    payload = json.dumps({"state": {"search": {"results": results}}})
+    return f"<html><script>window.__NUXT__=(function(){{return {payload}}})()</script></html>"
+
+
+class _PagedSession:
+    def __init__(self, pages):
+        self.pages = pages
+        self.calls = 0
+
+    def get(self, url, **kwargs):
+        html = self.pages[min(self.calls, len(self.pages) - 1)]
+        self.calls += 1
+        return type("R", (), {"text": html})()
+
+
+def test_scrape_brand_stops_when_site_repeats_results():
+    # Big brands: past a certain depth the site keeps serving already-seen
+    # listings instead of an empty page. Must stop early (not burn all
+    # MAX_PAGES_PER_BRAND) and report the scan as incomplete.
+    session = _PagedSession([_car_html([1, 2]), _car_html([3, 4]), _car_html([3, 4])])
+
+    items, incomplete = run.scrape_brand(session, config.Brand("Volkswagen", brand_id=89), date(2026, 8, 25))
+
+    assert session.calls == 3
+    assert incomplete is True
+    assert sorted(i["id"] for i in items) == ["1", "2", "3", "4"]
+
+
+def test_run_is_unhealthy_when_no_brand_completes():
+    watchlist = [config.Brand("Volkswagen", brand_id=89)]
+
+    def fake_scrape_brand(session, brand, run_date):
+        return [], True  # every brand incomplete -> removal detection fully off
+
+    _, healthy = _run_with_scrape_brand(fake_scrape_brand, watchlist)
+
+    assert healthy is False
+
+
+def test_repeat_after_passing_window_edge_counts_as_complete():
+    # Small brand: its scan already reached listings older than 45 days, so
+    # everything in-window was seen -- a trailing repeated page is just the
+    # end of results, not truncation.
+    old = _car_html([9], published=(2025, 7, 1))
+    session = _PagedSession([_car_html([1, 2]), old, old])
+
+    items, incomplete = run.scrape_brand(session, config.Brand("Toyota", brand_id=1), date(2026, 8, 25))
+
+    assert incomplete is False
+    assert sorted(i["id"] for i in items) == ["1", "2"]
