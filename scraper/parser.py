@@ -1,6 +1,13 @@
 """Parses search-results pages via the embedded Nuxt SSR state
 payload (see scraper/nuxt_payload.py), rather than scraping HTML.
 
+**Nov 2026: the site moved to Nuxt 3.** Listings now live at
+`data["search:{<query>}"]["listings"]` in the `__NUXT_DATA__` payload, with
+a real `url` ("/artikal/<id>"), `priceLabel`, a boolean `shop` (dealer) and
+`attributes` [{label, value}] instead of `special_labels` -- mileage is now
+a string like "100.826 km" and year "2022". `_convert_result_item` accepts
+both that shape and the older one described below.
+
 Confirmed against the real site (docs/RESEARCH.md): `state.search.results`
 is a clean array of listing objects. Sample shape actually observed:
 
@@ -33,6 +40,7 @@ derivable from the search payload is filled in here.
 """
 from __future__ import annotations
 
+import re
 from datetime import datetime, timezone
 
 from .brand_matching import fold_brands, guess_brand_from_title, strip_diacritics
@@ -76,28 +84,35 @@ def _convert_result_item(item: dict) -> dict:
         published_date = datetime.fromtimestamp(raw_date, tz=timezone.utc).date().isoformat()
 
     extra: dict = {}
-    for entry in item.get("special_labels") or []:
+    for entry in item.get("special_labels") or item.get("attributes") or []:
         label = strip_diacritics(str(entry.get("label", "")).lower())
         field = _SPECIAL_LABEL_FIELDS.get(label)
         if not field:
             continue
         value = entry.get("value")
         if field in _INTEGER_FIELDS:
-            try:
-                extra[field] = int(str(value).replace(".", ""))
-            except (TypeError, ValueError):
+            digits = re.sub(r"\D", "", str(value))  # "100.826 km" -> 100826
+            if not digits:
                 continue
+            extra[field] = int(digits)
         else:
             extra[field] = value
 
     user_type = item.get("user_type")
-    seller_type = "private" if user_type in (None, "user") else "dealer"
+    is_dealer = bool(item.get("shop")) or user_type not in (None, "user")
+    seller_type = "dealer" if is_dealer else "private"
+
+    raw_url = item.get("url")
+    if isinstance(raw_url, str) and raw_url.startswith("/"):
+        url = f"{BASE_URL}{raw_url}"
+    elif isinstance(raw_url, str) and raw_url.startswith("http"):
+        url = raw_url
+    else:
+        url = f"{BASE_URL}/artikal/{listing_id}"
 
     return {
         "id": listing_id,
-        # NEEDS VERIFICATION -- see module docstring; search results carry
-        # no url/slug field, this is an unconfirmed guess.
-        "url": f"{BASE_URL}/artikal/{listing_id}",
+        "url": url,
         "title": item.get("title"),
         "brand": _guess_brand(item.get("title"), item.get("brand_id")),
         "price_bam": item.get("price"),
@@ -118,5 +133,16 @@ def parse_search_results(html: str) -> list[dict]:
     found/evaluated -- treat that as a hard per-page failure (the site's
     structure likely changed), not as "zero results"."""
     state = extract_nuxt_state(html)
-    results = state.get("state", {}).get("search", {}).get("results") or []
-    return [_convert_result_item(item) for item in results]
+    return [_convert_result_item(item) for item in _find_results(state)]
+
+
+def _find_results(state: dict) -> list:
+    legacy_search = state.get("state", {}).get("search") if isinstance(state.get("state"), dict) else None
+    if isinstance(legacy_search, dict):
+        return legacy_search.get("results") or []
+    data = state.get("data")
+    if isinstance(data, dict):
+        for key, value in data.items():
+            if key.startswith("search:") and isinstance(value, dict) and isinstance(value.get("listings"), list):
+                return value["listings"]
+    raise NuxtPayloadError("no search listings found in the page payload (site structure may have changed)")

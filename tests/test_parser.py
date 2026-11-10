@@ -122,3 +122,79 @@ def test_no_results_returns_empty_list():
 def test_missing_nuxt_payload_raises():
     with pytest.raises(NuxtPayloadError):
         parse_search_results("<html><body>no payload here</body></html>")
+
+
+def _flatten(obj):
+    """Encodes `obj` the way Nuxt 3's __NUXT_DATA__ does: a flat JSON array
+    whose containers hold indices into the array."""
+    values: list = []
+
+    def add(v):
+        idx = len(values)
+        values.append(None)
+        if isinstance(v, dict):
+            values[idx] = {k: add(x) for k, x in v.items()}
+        elif isinstance(v, list):
+            values[idx] = [add(x) for x in v]
+        else:
+            values[idx] = v
+        return idx
+
+    add(obj)
+    return values
+
+
+def _make_nuxt3_html(listings, key='search:{"category_id":"18"}'):
+    values = _flatten({"data": {key: {"listings": listings}}, "state": {}})
+    return (
+        '<html><script>window.__NUXT__={};window.__NUXT__.config={public:{}}</script>'
+        '<script type="application/json" data-nuxt-data="nuxt-app" id="__NUXT_DATA__">'
+        + json.dumps(values)
+        + "</script></html>"
+    )
+
+
+def _nuxt3_item(**overrides):
+    item = {
+        "id": 79207051,
+        "type": "single",
+        "title": "Mercedes-Benz GLC 200d 4MATIC",
+        "url": "/artikal/79207051",
+        "images": ["https://cdn.example.com/1.jpeg", "https://cdn.example.com/2.jpeg"],
+        "price": 60900,
+        "priceLabel": "60.900 KM",
+        "date": _PUBLISHED_TS,
+        "shop": True,
+        "state": "used",
+        "attributes": [
+            {"label": "Gorivo", "value": "dizel"},
+            {"label": "Kilometraža", "value": "100.826 km"},
+            {"label": "Godište", "value": "2022"},
+        ],
+    }
+    item.update(overrides)
+    return item
+
+
+def test_parses_nuxt3_payload():
+    listing = parse_search_results(_make_nuxt3_html([_nuxt3_item()]))[0]
+
+    assert listing["id"] == "79207051"
+    assert listing["url"] == "https://olx.ba/artikal/79207051"
+    assert listing["price_bam"] == 60900
+    assert listing["mileage_km"] == 100826
+    assert listing["year"] == 2022
+    assert listing["fuel_type"] == "dizel"
+    assert listing["seller_type"] == "dealer"
+    assert listing["published_date"] == "2026-07-20"
+    assert listing["photo_count"] == 2
+
+
+def test_nuxt3_private_seller_and_empty_listings():
+    assert parse_search_results(_make_nuxt3_html([_nuxt3_item(shop=False)]))[0]["seller_type"] == "private"
+    assert parse_search_results(_make_nuxt3_html([])) == []
+
+
+def test_nuxt3_payload_without_search_listings_raises():
+    with pytest.raises(NuxtPayloadError):
+        parse_search_results(_make_nuxt3_html([_nuxt3_item()], key="nav-tree:18"))

@@ -960,3 +960,22 @@ not something to hide.
 Whether the 403 was a one-off block or the start of something more
 persistent (olx.ba tightening anti-scraping measures) is not yet known —
 worth watching the next few scheduled runs.
+
+## 15. Site moved to Nuxt 3 -- every brand failed (2026-11-10)
+
+The 11-10 cars run failed on all 30 brands. Cause: the site switched from
+Nuxt 2 (`window.__NUXT__=(function(...){...})(...)`, evaluated in a Node
+sandbox) to Nuxt 3, whose `window.__NUXT__` is now just `{config}` and whose
+state lives in `<script id="__NUXT_DATA__">` as a flat JSON array (each
+container holds indices into the array). The old path evaluated to
+`undefined` and crashed Node's stdout write.
+
+Fix: `nuxt_payload._unflatten` rebuilds the object graph in pure Python
+(no Node needed); `extract_nuxt_state` prefers it and keeps the legacy path.
+New listing shape, confirmed live via the "Debug fetch" workflow:
+`data["search:{<query>}"]["listings"]`, 50 per page, items carry a real
+`url` ("/artikal/<id>"), `priceLabel`, boolean `shop` (dealer) and
+`attributes` [{label, value}] with mileage as "100.826 km" and year as
+"2022". `parser._convert_result_item` accepts both shapes, and
+`_find_results` raises `NuxtPayloadError` if neither is found. Nothing was
+corrupted: all brands incomplete -> no removals; the run exited nonzero.

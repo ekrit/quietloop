@@ -17,6 +17,7 @@ filesystem.
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 import tempfile
 from pathlib import Path
@@ -113,7 +114,86 @@ process.stdout.write(JSON.stringify(result));
 """
 
 
+_NUXT_DATA_RE = re.compile(r'<script[^>]*\bid="__NUXT_DATA__"[^>]*>(.*?)</script>', re.DOTALL)
+
+
+def _unflatten(values: list) -> object:
+    """Rebuilds the object graph from a Nuxt 3 `__NUXT_DATA__` payload
+    (devalue's flat format): a JSON array where every container holds
+    *indices* into the array rather than nested values. Wrapper types
+    like ["ShallowReactive", <index>] are unwrapped; negative indices
+    (undefined/NaN/holes) become None."""
+    cache: dict[int, object] = {}
+
+    def hydrate(i: object) -> object:
+        if not isinstance(i, int) or isinstance(i, bool) or i < 0 or i >= len(values):
+            return None
+        if i in cache:
+            return cache[i]
+        v = values[i]
+        if isinstance(v, list):
+            if v and isinstance(v[0], str):
+                kind = v[0]
+                if kind == "Set":
+                    out: object = [hydrate(j) for j in v[1:]]
+                elif kind == "Map":
+                    out = [[hydrate(a), hydrate(b)] for a, b in zip(v[1::2], v[2::2])]
+                elif kind == "null":
+                    out = {k: hydrate(j) for k, j in zip(v[1::2], v[2::2])}
+                elif kind in ("Date", "RegExp", "BigInt"):
+                    out = v[1] if len(v) > 1 else None
+                else:  # Reactive/Ref/ShallowReactive/Object/... wrappers
+                    out = hydrate(v[1]) if len(v) > 1 else None
+                cache[i] = out
+                return out
+            arr: list = []
+            cache[i] = arr
+            arr.extend(hydrate(j) for j in v)
+            return arr
+        if isinstance(v, dict):
+            obj: dict = {}
+            cache[i] = obj
+            for k, j in v.items():
+                obj[k] = hydrate(j)
+            return obj
+        cache[i] = v
+        return v
+
+    return hydrate(0)
+
+
+def extract_nuxt_data(html: str) -> object:
+    """Parses the Nuxt 3 `<script id="__NUXT_DATA__">` JSON payload (pure
+    Python -- no Node needed). Raises NuxtPayloadError if it is missing or
+    malformed."""
+    match = _NUXT_DATA_RE.search(html)
+    if match is None:
+        raise NuxtPayloadError("no '__NUXT_DATA__' script found in page")
+    try:
+        values = json.loads(match.group(1))
+    except json.JSONDecodeError as exc:
+        raise NuxtPayloadError(f"__NUXT_DATA__ wasn't valid JSON: {exc}") from exc
+    if not isinstance(values, list) or not values:
+        raise NuxtPayloadError("__NUXT_DATA__ wasn't a non-empty array")
+    try:
+        return _unflatten(values)
+    except RecursionError as exc:
+        raise NuxtPayloadError("__NUXT_DATA__ nested too deeply to unflatten") from exc
+
+
 def extract_nuxt_state(html: str) -> dict:
+    """Returns the page's embedded state: the Nuxt 3 `__NUXT_DATA__` payload
+    if present (the site moved to it in Nov 2026), else the legacy Nuxt 2
+    `window.__NUXT__=...` call evaluated in a Node sandbox."""
+    if _NUXT_DATA_RE.search(html):
+        data = extract_nuxt_data(html)
+        if not isinstance(data, dict):
+            raise NuxtPayloadError(f"__NUXT_DATA__ root was {type(data).__name__}, expected an object")
+        return data
+    return _extract_legacy_nuxt_state(html)
+
+
+def _extract_legacy_nuxt_state(html: str) -> dict:
     """Finds `window.__NUXT__=...` in `html`, evaluates it in a sandboxed
     Node vm context, and returns the resulting plain object.
 
