@@ -78,6 +78,20 @@ def report_nuxt_state(html: str) -> None:
     print(f"wrote (possibly truncated) payload to {out_path}")
 
 
+def report_nuxt_markers(html: str) -> None:
+    """Shows HOW the page data is embedded, for when extract_nuxt_state breaks."""
+    for needle in ("__NUXT__", "__NUXT_DATA__", "__NUXT_DEFERRED", 'id="__nuxt"', "window.__"):
+        idxs = [m.start() for m in re.finditer(re.escape(needle), html)]
+        print(f"{needle!r}: {len(idxs)} occurrence(s) at {idxs[:10]}")
+        for i in idxs[:3]:
+            snippet = html[max(0, i - 120) : i + 300].replace("\n", " ")
+            print(f"    ...{snippet}...")
+    print("--- <script> tags (attrs, length, first 100 chars of body) ---")
+    for m in re.finditer(r"<script([^>]*)>(.*?)</script>", html, re.DOTALL):
+        body = m.group(2)
+        print(f"  attrs={m.group(1).strip()[:120]!r} len={len(body)} start={body[:100]!r}")
+
+
 def main() -> None:
     url = sys.argv[1] if len(sys.argv) > 1 and sys.argv[1] else f"{BASE_URL}/pretraga?category_id=18"
     session = PoliteSession()
@@ -90,6 +104,9 @@ def main() -> None:
 
     title_match = re.search(r"<title>(.*?)</title>", text, re.IGNORECASE | re.DOTALL)
     print(f"title={title_match.group(1).strip() if title_match else None}")
+
+    print("--- NUXT markers ---")
+    report_nuxt_markers(text)
 
     print("--- NUXT payload ---")
     report_nuxt_state(text)
